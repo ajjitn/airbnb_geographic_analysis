@@ -475,9 +475,6 @@ pct_bach_higher_density_df = tribble(~pct_bach_higher_e, ~density,
   unnest(cols = c(pct_bach_higher_e, density))
 
 
-plot_width = unit(6, "cm")
-plot_height = unit(7.25, "cm")
-
 # Create density histogram for our variable using ggplot and geom_line
 # We need to use geom_line so we can get colors to vary along the line to match
 # the legend coloring.
@@ -504,20 +501,7 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
   coord_flip() +
   theme_void() +
   guides(color = "none") +
-  # guides(color = guide_colorbar(
-  #                     # title.vjust = 6,
-  #                     title.position = "left",
-  #                     label.position = "left",
-  #                     barheight = plot_height,
-  #                     draw.llim = T,
-  #                     draw.ulim = T
-  #                     )
-  # ) +
-  guides(color = "none") +
-  # force_panelsizes(rows = plot_height, cols = plot_width) +
   theme(
-    # legend.direction = "vertical",
-    # legend.position = "left",
     plot.margin = unit(c(1,0,0.7,0), "inches"),
     axis.title = element_blank(),
     axis.text = element_blank(),
@@ -525,7 +509,7 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
     axis.line = element_blank(),
     axis.ticks.length =  unit(0, "pt")
   )
-# pct_bach_higher_density_line
+
 
 # ----- Paste everything together with library(patchwork) -------
 
