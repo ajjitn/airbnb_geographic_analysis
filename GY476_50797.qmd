@@ -1,0 +1,594 @@
+---
+title: "Airbnb Geographic Analysis"
+format:
+  html:
+    code-fold: true
+    code-summary: "Show the code"
+    fig-width: 8
+    fig-height: 8
+
+execute:
+  warning: false
+  error: false
+  message: false
+editor_options: 
+  chunk_output_type: console
+---
+
+# Introduction
+
+# Data Collection 
+
+## 1.1 Collecting and importing the data
+
+```{r libraries}
+library(tidyverse)
+library(sf)
+library(tidylog)
+library(mapview)
+library(tmap)
+# For painless filepath pointing
+library(here)
+library(janitor)
+library(tidycensus)
+library(leaflet.extras2)
+library(paletteer)
+library(ggpubr)
+library(patchwork)
+library(grid)
+library(geomtextpath)
+library(ggh4x)
+acs_vars = load_variables(year = 2020, dataset = "acs5")
+
+```
+
+```{r data_read_in}
+#| cache: true
+
+#----- Read in data -------------
+
+# ---- Airbnb data
+
+# Helper fxn to download csv.gz file from Inside Airbnb, unzip and read in
+download_and_readin_inside_airbnb_data = function(url, city){
+  
+  # Set data filepath
+  data_filepath = here(str_glue("data/raw-data/{city}.csv.gz"))
+  
+  # Download data directly from Inside Airbnb website
+  dir.create(here("data/raw-data/"), showWarnings = FALSE)
+  download.file(url, destfile = data_filepath)
+
+
+  # Read in data
+  read_csv(here(data_filepath)) %>% 
+    st_as_sf(coords = c("longitude", "latitude")) %>% 
+    # Since coords are lot/lng, this is EPSG 4326
+    st_set_crs("EPSG:4326") %>% 
+    # To get nice and easily workable column names
+    janitor::clean_names() %>% 
+    mutate(city = city)
+}
+
+
+# Download and read in Airbnb data
+sfo_data = download_and_readin_inside_airbnb_data(url =
+                              "http://data.insideairbnb.com/united-states/ca/san-francisco/2022-09-07/data/listings.csv.gz",
+                            city = "sfo")
+oakland_data = download_and_readin_inside_airbnb_data(url =
+                              "http://data.insideairbnb.com/united-states/ca/oakland/2022-09-18/data/listings.csv.gz",
+                            city = "oakland")
+san_mateo_data = download_and_readin_inside_airbnb_data(url =
+                              "http://data.insideairbnb.com/united-states/ca/san-mateo-county/2022-09-19/data/listings.csv.gz",
+                            city = "san_mateo")
+
+# Bind all data into one long dataframe, which is safe bc we have added a "city" column for easy identificiation
+airbnb_data = bind_rows(oakland_data, sfo_data, san_mateo_data)
+
+# ---- Zip code data
+
+# Download and read in zip code data
+dir.create("data/raw-data/", showWarnings = FALSE)
+# Get download URL for geojson by examining API request logs on the website:
+# https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q
+
+# Try downloading Berkeley zip codes. Sometimes we get a 500 error in which
+# case we use backup local copy
+fpath  = tryCatch(
+  expr = {download.file("https://geodata.lib.berkeley.edu/download/file/ark28722-s7888q-geojson.json",
+              destfile = here("data", "bay_area_zip_codes.geojson"))
+    here("data","bay_area_zip_codes.geojson") 
+    },
+  warning = function(w) {
+    here("data","bay_area_zipcodes.geojson") 
+    },
+  error = function(e) {
+    here("data","bay_area_zipcodes.geojson") 
+    }
+)
+
+zip_codes = st_read(fpath, quiet = TRUE) %>% 
+  clean_names()
+
+# ---- ACS data
+
+# Use get_acs from tidycensus
+acs_data = get_acs(geography = "zcta",
+                   # Got these variabla names by perusing data.census.gov website
+                   variables = c(median_rent = "B25031_001",
+                                 median_rent_as_pct_of_income = "B25071_001",
+                                 unemp_rate_16_plus = "S2301_C04_001",
+                                 num_bach_higher = "B23006_023",
+                                 num_25_64_for_bach_higher = "B23006_001"
+                                 # median_rent_no_bedroom = "B25031_002",
+                                 # median_rent_1_bedroom = "B25031_003",
+                                 # median_rent_2_bedroom ="B25031_004",
+                                 # median_rent_3_bedroom = "B25031_005"
+                                 ),
+                   year = 2020,
+                   survey = "acs5",
+                   output = "wide"
+                   ) %>% 
+  clean_names() %>% 
+  # Calculate pct bach or higher using num and denom
+  mutate(pct_bach_higher_e = num_bach_higher_e/num_25_64_for_bach_higher_e,
+         pct_bach_higher_m = moe_ratio(
+           num = num_bach_higher_e,
+           denom = num_25_64_for_bach_higher_e,
+           moe_num = num_bach_higher_m, 
+           moe_denom = num_25_64_for_bach_higher_m
+         )) %>% 
+  rename(zcta = geoid)
+
+```
+
+```{r cleaning_data}
+# -----  Join data ---------
+
+# Join zip code data to ACS zcta level data. zcta = zipcode for almost all cases
+zip_code_demographic_data = zip_codes %>% 
+  select(zip, po_name, state) %>% 
+  # 1 zip code is in zip_codes but not in ACS data. Upon further inspection,
+  # this is a zip code in Mountain View close to the water and not in our 
+  # analysis area (ie there are no airbnb listings in this zip). So we drop this 
+  # one zip code with inner_join
+  tidylog::inner_join(acs_data, by = c("zip" = "zcta"))
+
+
+# -----  Clean data ---------
+
+# Clean up airbnb data
+airbnb_data_cleaned = airbnb_data %>% 
+  # Convert price from chr to numeric by removing $ and , characters
+  mutate(price = str_replace_all(price, "\\$","") %>% 
+           str_replace_all( ",", "") %>% 
+           as.numeric()) %>% 
+  select(id, price, listing_url, name, city, neighbourhood, neighbourhood_cleansed, property_type, bedrooms, bathrooms,number_of_reviews, has_availability, number_of_reviews, reviews_per_month, everything())
+
+
+
+# -----  Drop Outliers ---------
+
+# Drop 0.5% of highest priced outlier airbnb listings. 
+# Top 0.5% of listings is effectively 67 listings with prices >= $2500
+# Many of these outliers don't have any reviews and suggest they can be safely
+# removed. There are 4 listings with a listed price of 0, but 2 do have
+# reviews so we decide to keep them in
+top_outlier_listings = airbnb_data_cleaned %>% 
+  slice_max(price, 
+            prop = 0.005) 
+
+airbnb_data_cleaned = airbnb_data_cleaned %>% 
+  # This effectively removes top 0.5% of highest priced listings, which is 
+  # 67/13415 listings. Many of these outliers don't have any reviews and suggest
+  # they can be safely removed. There are 4 listings with a listed price of 0, 
+  # but 2 do have reviews so we decide to keep them in
+  filter(price < 2500)
+
+
+# Make histogram of dropped outliers
+outlier_dropped_listings_price_histogram = top_outlier_listings %>% 
+  ggplot(aes(x = price)) +
+  geom_histogram(fill = "forestgreen", color = "white") +
+  labs(title = "Histogram of Prices for top 0.5% of listings",
+       x = "Price ($)", y = "Count (n)")
+
+outlier_dropped_listings_price_histogram
+
+
+```
+
+
+# Data Discussion 
+
+
+## 1.2 Preparing the data
+
+I make use of 4 datasets in this project:
+
+1) Airbnb data: This is a periodically published snapshot of AirBnB listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We have downloaded the AirBnB data for San Franscisco, San Mateo, and Oakland.
+
+2) Bay Area Zipcode data
+
+3) ACS Demographic Data
+
+3) OSM Amenity Data
+
+I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. It is a conformal coordinate system that preserves angles and is suitable for the entirety of the Bay Area. 
+
+
+```{r projecting_data}
+airbnb_data_projected = airbnb_data_cleaned %>% 
+  st_transform("EPSG:7131")
+  
+zip_code_demographic_data = zip_code_demographic_data %>% 
+  st_transform("EPSG:7131")
+
+```
+
+
+
+
+# Mapping/Data Viz
+
+First we perform a spatial join to see how many Airbnb listings are in each zip code. When performing our spatial join, we notice that there are 32 Airbnb listings which fall out of the bounds of the Bay Area Zip Codes and do not get joined. Some of these may be coding errors as they are just a few feet into the ocean, while other listings are more than a mile away from the nearest zip code. To correct for this, I perform a second spatial join but this time join each of the 32 problematic listings to the closest zip code. If the distance between the closest zip and the listing is less than 100 meters (12 listings) I assign the closest zip code to the listing. And if the distance is more than 100 meters (20 listings), I drop it from this analysis.
+
+```{r perform_spatial_join}
+
+# ----- Perform Spatial Join -------
+airbnb_data_joined = airbnb_data_projected %>% 
+  st_join(zip_code_demographic_data %>% select(zip, po_name), 
+          left_join = TRUE)
+
+# There are 32 listings which aren't joined, lets instead match those if they're 
+# within 100 meters of a zip code
+problematic_listings_matched_zipcodes = airbnb_data_joined %>% 
+  filter(is.na(zip)) %>% 
+  st_is_within_distance(zip_code_demographic_data, 100) %>%
+  # Above returns either index if match is found or an empty set if no matches.
+  # Use the index to extract actual zip code value from zip_codes
+  map(~zip_code_demographic_data %>% 
+        slice(.x) %>% 
+        pull(zip)) %>%
+  # Convert empty set to NA so we can easily append to our data
+  map(
+  ~ifelse(is_empty(.x), 
+           NA_integer_, 
+           .x)
+  ) %>% 
+  unlist() %>% 
+  as_tibble_col(column_name = "zip_corrected") %>% 
+  mutate(id = airbnb_data_joined %>% 
+           filter(is.na(zip)) %>% 
+           pull(id)
+         )
+
+# Append the problematic listings with corrected zips back. 
+# For listing still wihtout zips (there are 20) we drop them from the rest of 
+# the analysis
+airbnb_data_with_zips = airbnb_data_joined %>% 
+  left_join(problematic_listings_matched_zipcodes, 
+            by = "id") %>% 
+  mutate(zip_final = coalesce(zip, zip_corrected)) %>% 
+  # removes the 20 unmatched listings
+  filter(!is.na(zip_final))
+
+
+```
+
+### Map 1.1: Airbnb Listings per Zipcode
+
+
+```{r listings_by_zipcode_map}
+
+# ----- Count airbnb listings by zip ----------
+airbnb_count_by_zips = airbnb_data_with_zips %>% 
+  st_drop_geometry() %>% 
+  count(zip_final, sort = TRUE) %>% 
+  right_join(zip_codes, 
+             by = c("zip_final" = "zip")) %>% 
+  st_as_sf()
+
+# ----- Create choropleth map ----------
+airbnb_listings_by_zip_code = airbnb_count_by_zips %>% 
+  ggplot(aes(fill = n)) + 
+  geom_sf(color = "white", size = 0.1) +
+  scale_fill_fermenter(na.value = "grey90",
+                       palette = "Oranges",
+                       n.breaks = 6,
+                       direction = 1,
+                       show.limits = TRUE) +
+  theme_void() +
+  labs(title = "Count of Airbnbs Listings by Zip Code",
+       fill = "N")
+
+airbnb_listings_by_zip_code
+```
+
+
+### Map 1.2: Average Airbnb Prices per Zipcode
+
+```{r listing_avg_price_by_zip_map}
+
+# ----- Calculate avg price by zip ----------
+airbnb_avg_price_by_zips = airbnb_data_with_zips %>% 
+  st_drop_geometry() %>% 
+  group_by(zip_final) %>% 
+  summarize(avg_price = mean(price)) %>% 
+  right_join(zip_codes, 
+             by = c("zip_final" = "zip")) %>% 
+  st_as_sf()
+
+# ----- Create choropleth map ----------
+airbnb_avg_price_by_zips_plot = airbnb_avg_price_by_zips %>% 
+  ggplot(aes(fill = avg_price)) + 
+  geom_sf(color = "white", size = 0.1) +
+  scale_fill_fermenter(na.value = "grey90",
+                       palette = "Oranges",
+                       n.breaks = 6,
+                       direction = 1,
+                       show.limits = TRUE,
+                       labels = scales::dollar_format()) +
+  # scale_fill_steps(high = "magenta", low = "blue", na.value = "grey90") +
+  theme_void() +
+  labs(title = "Average Price of Airbnbs Listings by Zip Code", fill = "Avg Price")
+
+airbnb_avg_price_by_zips_plot
+```
+
+For the demographic Census variables, I choose to look at housing costs (median rent per bedroom) and education levels (percentage of adults with at least a bachelor's degree). 
+
+### Map 2.1: Median Rent in Bay Area
+
+```{r median_rent_map}
+#| fig-width: 6
+#| fig-height: 7.25
+
+# ----- Create raw median rent sf ggplot -------
+median_rent_map = zip_code_demographic_data %>% 
+  ggplot(aes(fill = median_rent_e)) +
+  geom_sf(color = "white", size = 0.1) +
+  scale_fill_viridis_c(
+                    labels = scales::dollar_format(),
+                    direction = 1,
+                    na.value = "grey90",
+                    guide = guide_colorbar(
+                      title.vjust = 6,
+                      label.position = "left",
+                      barheight = 14.5)
+                    ) +
+  labs(fill = "Median Rent") +
+  # scale_fill_steps(high = "magenta", low = "blue", na.value = "grey90") +
+  theme_void()  +
+  theme(text = element_text(family = "Lato"),
+      legend.title = element_text(size = 14, face = "bold.italic"),
+      legend.text = element_text(size = 10),
+      # legend.title = element_blank()
+      )
+
+# ----- Generate density histogram for median rent -------
+
+# Generate density matrix for our variable, and convert into df
+median_rent_density = zip_code_demographic_data$median_rent_e %>% 
+  na.omit() %>% 
+  stats::density()
+
+median_rent_density_df = tribble(~median_rent_e, ~density,
+       median_rent_density$x, median_rent_density$y) %>% 
+  unnest(cols = c(median_rent_e, density))
+
+
+median_rent_density_line = median_rent_density_df %>% 
+  ggplot(aes(x = median_rent_e,
+             y = density,
+             color = median_rent_e,
+             # fill = median_rent_e
+             )) +
+  geom_line(lwd = 1.5, alpha = 0.8) +
+  geom_textpath(label = "Density",
+                size = 4, 
+                text_only = TRUE,
+                color = "grey60",
+                vjust = -0.1,
+                hjust = 0.3,
+                family = "Lato",
+                fontface = "bold.italic",
+                alpha = 0.6
+                )+
+  scale_color_viridis_c(
+                  direction = 1,
+                  na.value = "grey90"
+                  ) +
+  coord_flip() +
+  theme_void() +
+  guides(color = "none") +
+  theme(
+    plot.margin = unit(c(1,0,0.7,0), "inches"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.line = element_blank(),
+    axis.ticks.length =  unit(0, "pt")
+  )
+
+# ----- Paste everything together with library(patchwork) -------
+
+design <- "
+11111111111111111444
+11111111111111111444
+11111111111111111233
+11111111111111111233
+11111111111111111233
+11111111111111111233
+11111111111111111233
+11111111111111111555
+11111111111111111555
+"    
+median_rent_map +
+  guide_area() + 
+  median_rent_density_line + 
+  plot_spacer() +
+  plot_spacer() +
+  plot_layout(design=design, guides = "collect")
+
+
+```
+
+
+### Map 2.2: Percentage of 25+ population with Bachelors Degree or Higher in Bay Area
+```{r}
+#| fig-width: 6
+#| fig-height: 7.25
+
+
+# ----- Create raw % Bachelors sf ggplot -------
+bach_degree_map = zip_code_demographic_data %>% 
+  ggplot(aes(fill = pct_bach_higher_e)) +
+  geom_sf(color = "white", 
+          size = 0.1) +
+  scale_fill_viridis_c(
+                    labels = scales::percent_format(),
+                    direction = 1,
+                    na.value = "grey90",
+                    guide = guide_colorbar(
+                      title.vjust = 6,
+                      label.position = "left",
+                      barheight = 14.5)
+                    ) +
+  labs(fill = str_wrap("% Bachelors", width = 20)) +
+  theme_void() +
+  theme(text = element_text(family = "Lato"),
+        legend.title = element_text(size = 14, face = "bold.italic"),
+        legend.text = element_text(size = 10),
+        # legend.title = element_blank()
+        )
+
+
+# ----- Generate density histogram for % bach -------
+
+# Generate density matrix for our variable, and convert into df
+pct_bach_higher_density = zip_code_demographic_data$pct_bach_higher_e %>% 
+  stats::density()
+
+pct_bach_higher_density_df = tribble(~pct_bach_higher_e, ~density,
+       pct_bach_higher_density$x, pct_bach_higher_density$y) %>% 
+  unnest(cols = c(pct_bach_higher_e, density))
+
+
+plot_width = unit(6, "cm")
+plot_height = unit(7.25, "cm")
+
+# Create density histogram for our variable using ggplot and geom_line
+# We need to use geom_line so we can get colors to vary along the line to match
+# the legend coloring.
+pct_bach_higher_density_line = pct_bach_higher_density_df %>% 
+  ggplot(aes(x = pct_bach_higher_e,
+             y = density,
+             color = pct_bach_higher_e,
+             )) +
+  geom_line(lwd = 1.5, alpha = 0.8) +
+  geom_textpath(label = "Density",
+                size = 4, 
+                text_only = TRUE,
+                color = "grey60",
+                vjust = -0.3,
+                family = "Lato",
+                fontface = "bold.italic",
+                alpha = 0.6
+                )+
+  scale_color_viridis_c(
+                  # labels = scales::percent_format(),
+                  direction = 1,
+                  na.value = "grey90"
+                  ) +
+  coord_flip() +
+  theme_void() +
+  guides(color = "none") +
+  # guides(color = guide_colorbar(
+  #                     # title.vjust = 6,
+  #                     title.position = "left",
+  #                     label.position = "left",
+  #                     barheight = plot_height,
+  #                     draw.llim = T,
+  #                     draw.ulim = T
+  #                     )
+  # ) +
+  guides(color = "none") +
+  # force_panelsizes(rows = plot_height, cols = plot_width) +
+  theme(
+    # legend.direction = "vertical",
+    # legend.position = "left",
+    plot.margin = unit(c(1,0,0.7,0), "inches"),
+    axis.title = element_blank(),
+    axis.text = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.line = element_blank(),
+    axis.ticks.length =  unit(0, "pt")
+  )
+# pct_bach_higher_density_line
+
+# ----- Paste everything together with library(patchwork) -------
+
+design <- "
+111111111111111111444
+111111111111111111444
+111111111111111111233
+111111111111111111233
+111111111111111111233
+111111111111111111233
+111111111111111111233
+111111111111111111555
+111111111111111111555
+"    
+bach_degree_map +
+  guide_area() + 
+  pct_bach_higher_density_line + 
+  plot_spacer() +
+  plot_spacer() +
+  plot_layout(design=design, guides = "collect")
+
+
+# Create column for pct_bach_breaks, will be used for coloring in histogram
+# zip_code_demographic_data$pct_bach_breaks <- cut(zip_code_demographic_data$pct_bach_higher_e, 
+#                                                  breaks = seq(0, 1, 0.1))
+# 
+# zip_code_demographic_data %>% 
+#   ggplot(aes(y = pct_bach_higher_e,
+#              fill = pct_bach_higher_e,
+#             # group = 1
+#              )
+#          ) +
+#   geom_density(n = 512, bw = "SJ")
+#   # geom_freqpoly() 
+#   geom_histogram(bins = 70)
+#   geom_histogram(binwidth = 0.1,
+#                  boundary = 0,
+#                  closed = "left",
+#                  size = 0.5,
+#                  color = "white") +
+#   scale_fill_ordinal(
+#               # low = "red",
+#               # high = "green",
+#               # palette = "Greens",
+#               direction = 1,
+#               na.value = "grey20"
+#               ) +
+#   scale_y_continuous(
+#     # breaks = seq(0, 1, 0.1),
+#     labels = scales::percent_format()) +
+#   guides(fill = "none")
+# 
+#   
+
+
+
+
+```
+
+# Analysis Methods Explained
+
+# Spatial Analysis
+
+# Conclusion
+
+
