@@ -38,7 +38,9 @@ library(patchwork)
 library(grid)
 library(geomtextpath)
 library(ggh4x)
-acs_vars = load_variables(year = 2020, dataset = "acs5")
+library(units)
+library(nngeo)
+# acs_vars = load_variables(year = 2020, dataset = "acs5")
 
 ```
 
@@ -110,11 +112,13 @@ fpath  = tryCatch(
 zip_codes = st_read(fpath, quiet = TRUE) %>% 
   clean_names()
 
-# ---- ACS data
+# ---- ACS and ZCTA data
 
 # Use get_acs from tidycensus
-acs_data = get_acs(geography = "zcta",
-                   # Got these variabla names by perusing data.census.gov website
+acs_data_raw = get_acs(
+                   # Get zcta level variables
+                   geography = "zcta",
+                   # Got these variable names by perusing data.census.gov website
                    variables = c(median_rent = "B25031_001",
                                  median_rent_as_pct_of_income = "B25071_001",
                                  unemp_rate_16_plus = "S2301_C04_001",
@@ -127,9 +131,14 @@ acs_data = get_acs(geography = "zcta",
                                  ),
                    year = 2020,
                    survey = "acs5",
-                   output = "wide"
-                   ) %>% 
-  clean_names() %>% 
+                   output = "wide",
+                   # Allows us to get ZCTA geometries as sf dataframes
+                   geometry = TRUE,
+                   quiet = TRUE
+) 
+
+acs_data_raw = acs_data_raw %>%
+  janitor::clean_names() %>%
   # Calculate pct bach or higher using num and denom
   mutate(pct_bach_higher_e = num_bach_higher_e/num_25_64_for_bach_higher_e,
          pct_bach_higher_m = moe_ratio(
@@ -137,15 +146,49 @@ acs_data = get_acs(geography = "zcta",
            denom = num_25_64_for_bach_higher_e,
            moe_num = num_bach_higher_m, 
            moe_denom = num_25_64_for_bach_higher_m
-         )) %>% 
+         )) %>%
   rename(zcta = geoid)
+
+# We will use acs_data in appendix to see how boundaries
+acs_data = acs_data_raw %>% 
+  st_drop_geometry()
+
 
 ```
 
+
+# Data Discussion 
+
+
+## Preparing the data
+
+I make use of 4 datasets in this project:
+
+1) Airbnb data: This is a periodically published snapshot of AirBnB listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We programmatically download the zipped csc files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the `r nrow(airbnb_data)` total listings.
+
+2) Bay Area Zipcode data: These are shapefiles of the 187 zip codes which comprise the Bay Area and was downloaded programmatically from the [Berkeley Geodata Library](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q). 
+
+3) ACS Demographic Data: Using `library(tidycensus)` we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Th3 5 year survey contains average values from 5 years of data collection in order to procide robust and precise esimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align  with the Airbmb data which are scra 
+
+Specifically we look at the Median Rent per bedrooom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor's degree was calculated from Census Table
+
+ZCTAs are generalized representations of zip codes, and in most cases are very close zip codes. Sometimes a zip code may not have a corresponding ZCTA. In our case of the Bay Area, there is one zip code in Mountain View which does not have a corresonding ZCTA which we remove from our analysis. 
+
+3) OSM Amenity Data
+
+## Data Cleaning
+
+For the Airbnb data, we convert the `price` column from a character vector into a numeric vector by removing commas, and `$` signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection see that most of these listing don't have any reviews and may not be real, justifying our decision.
+
+First we perform a spatial join to see how many Airbnb listings are in each zip code. When performing our spatial join, we notice that there are 32 Airbnb listings which fall out of the bounds of the Bay Area Zip Codes and do not get joined. Some of these may be coding errors as they are just a few feet into the ocean, while other listings are more than a mile away from the nearest zip code. To correct for this, I perform a second spatial join but this time join each of the 32 problematic listings to the closest zip code. If the distance between the closest zip and the listing is less than 100 meters (12 listings) I assign the closest zip code to the listing. And if the distance is more than 100 meters (20 listings), I drop it from this analysis.
+
+
 ```{r cleaning_data}
+#| cache = TRUE
+
 # -----  Join data ---------
 
-# Join zip code data to ACS zcta level data. zcta = zipcode for almost all cases
+# Join zip code data to ACS zcta level data. zcta = roughly zipcode for almost all cases
 zip_code_demographic_data = zip_codes %>% 
   select(zip, po_name, state) %>% 
   # 1 zip code is in zip_codes but not in ACS data. Upon further inspection,
@@ -199,22 +242,8 @@ outlier_dropped_listings_price_histogram
 ```
 
 
-# Data Discussion 
-
-
-## 1.2 Preparing the data
-
-I make use of 4 datasets in this project:
-
-1) Airbnb data: This is a periodically published snapshot of AirBnB listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We have downloaded the AirBnB data for San Franscisco, San Mateo, and Oakland.
-
-2) Bay Area Zipcode data
-
-3) ACS Demographic Data
-
-3) OSM Amenity Data
-
-I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. It is a conformal coordinate system that preserves angles and is suitable for the entirety of the Bay Area. 
+## Projections 
+I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for all our datasets as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. It is a conformal coordinate system that preserves angles and is suitable for the entirety of the Bay Area. 
 
 
 ```{r projecting_data}
@@ -224,26 +253,118 @@ airbnb_data_projected = airbnb_data_cleaned %>%
 zip_code_demographic_data = zip_code_demographic_data %>% 
   st_transform("EPSG:7131")
 
+zip_codes = zip_codes %>% 
+  st_transform("EPSG:7131")
+
+acs_data_raw = acs_data_raw %>% 
+  st_transform("EPSG:7131")
+
 ```
 
 
 
+## Data Cleaning
 
-# Mapping/Data Viz
-
-First we perform a spatial join to see how many Airbnb listings are in each zip code. When performing our spatial join, we notice that there are 32 Airbnb listings which fall out of the bounds of the Bay Area Zip Codes and do not get joined. Some of these may be coding errors as they are just a few feet into the ocean, while other listings are more than a mile away from the nearest zip code. To correct for this, I perform a second spatial join but this time join each of the 32 problematic listings to the closest zip code. If the distance between the closest zip and the listing is less than 100 meters (12 listings) I assign the closest zip code to the listing. And if the distance is more than 100 meters (20 listings), I drop it from this analysis.
 
 ```{r perform_spatial_join}
 
+# ---- Define Study Area -------
+
+# Define study area as airbnb locations bounding box + buffer
+study_area_box = airbnb_data_projected %>%
+  # Since CRS is in meters, this is 500 meter boundingbox
+  # st_buffer(dist = 500) %>% 
+  st_bbox() 
+
+# Limit ZCTA data to this bounding box
+acs_data_cropped = acs_data_raw %>% 
+  mutate(zcta_area = st_area(.)) %>% 
+  st_crop(study_area_box)
+
+zcta_in_bbox = acs_data_cropped %>% st_drop_geometry() %>% pull(zcta) %>% unique()
+
+mapview(acs_data_raw %>% filter(zcta %in% zcta_in_bbox)) | mapview(acs_data_cropped, col.regions = "steelblue")
+
+mapview(acs_zctas_with_airbnbs) |  mapview(acs_data_cropped, col.regions = "steelblue")
+
 # ----- Perform Spatial Join -------
 airbnb_data_joined = airbnb_data_projected %>% 
-  st_join(zip_code_demographic_data %>% select(zip, po_name), 
-          left_join = TRUE)
+  # st_join(zip_code_demographic_data %>% select(zip, po_name), 
+  #         left_join = TRUE) %>% 
+  st_join(
+    acs_data_raw %>% 
+      select(zcta, median_rent_e, pct_bach_higher_e, unemp_rate_16_plus_e),
+    left = TRUE
+  )
 
+
+# There are 24 listings which aren't joined to a zcta, lets instead match those 
+# if they're within 500 meters of a zcta
+problematic_listings_matched_zctas = airbnb_data_joined %>% 
+  filter(is.na(zcta)) %>%
+  st_is_within_distance(acs_data_raw, 400) %>%
+  # Above returns either index if match is found or an empty set if no matches.
+  # Take first index (ie closest matching zcta index) and extract actual zcta
+  # value from acs_data_raw
+  map(~acs_data_raw %>% 
+        slice(.x) %>% 
+        pull(zcta)) %>%
+  # Convert empty set to NA so we can easily append to our data
+  map(
+  ~ifelse(is_empty(.x), 
+           NA_integer_, 
+           .x)
+  ) %>% 
+  unlist() %>% 
+  as_tibble_col(column_name = "zcta_corrected") %>% 
+  mutate(id = airbnb_data_joined %>% 
+           filter(is.na(zcta)) %>% 
+           pull(id)
+         )
+
+airbnb_data_corrected = airbnb_data_joined %>% 
+  left_join(problematic_listings_matched_zctas, 
+            by = "id") %>% 
+  mutate(zcta_final = coalesce(zcta, zcta_corrected)) 
+  # removes the 20 unmatched listings
+
+
+airbnb_data_corrected %>% 
+  filter(is.na(zcta_final)) %>% 
+  mapview() + mapview(acs_data_cropped, col.regions = "steelblue")
+
+
+ 
+
+list_zctas_in_airbnb_data = airbnb_data_joined %>% 
+  select(zcta) %>% 
+  st_drop_geometry() %>% 
+  pull(zcta) %>% 
+  unique()
+
+acs_zctas_with_airbnbs = acs_data_raw %>% 
+  filter(zcta %in% zctas_in_airbnb_data) 
+
+x = airbnb_data_joined %>% 
+  st_join(acs_data_raw %>% 
+            select(zcta, median_rent_e, pct_bach_higher_e, unemp_rate_16_plus_e),
+          left_join = TRUE
+  )
+
+
+mapview(acs_data_raw %>% st_crop(airbnb_data_projected))
+x %>% 
+  filter(is.na(zcta)) %>% 
+  mapview() | mapview(acs_data_raw %>% st_crop(airbnb_data_projected))
+
+
+mapview(acs_data_raw %>% st_crop(airbnb_data_projected))
+                                                                                    
+                                                                                    
 # There are 32 listings which aren't joined, lets instead match those if they're 
 # within 100 meters of a zip code
 problematic_listings_matched_zipcodes = airbnb_data_joined %>% 
-  filter(is.na(zip)) %>% 
+  filter(is.na(zcta)) %>% 
   st_is_within_distance(zip_code_demographic_data, 100) %>%
   # Above returns either index if match is found or an empty set if no matches.
   # Use the index to extract actual zip code value from zip_codes
@@ -280,6 +401,9 @@ airbnb_data_with_zips = airbnb_data_joined %>%
 
 
 ```{r listings_by_zipcode_map}
+#| fig-width: 7
+#| fig-height: 7
+
 
 # ----- Count airbnb listings by zip ----------
 airbnb_count_by_zips = airbnb_data_with_zips %>% 
@@ -289,26 +413,135 @@ airbnb_count_by_zips = airbnb_data_with_zips %>%
              by = c("zip_final" = "zip")) %>% 
   st_as_sf()
 
-# ----- Create choropleth map ----------
-airbnb_listings_by_zip_code = airbnb_count_by_zips %>% 
-  ggplot(aes(fill = n)) + 
-  geom_sf(color = "white", size = 0.1) +
-  scale_fill_fermenter(na.value = "grey90",
-                       palette = "Oranges",
-                       n.breaks = 6,
-                       direction = 1,
-                       show.limits = TRUE) +
-  theme_void() +
-  labs(title = "Count of Airbnbs Listings by Zip Code",
-       fill = "N")
 
-airbnb_listings_by_zip_code
+
+# ---- Create histogram legend for map -------
+
+# Create buckets for price for use in histogram
+airbnb_count_by_zips = airbnb_count_by_zips %>% 
+  mutate(count_buckets = case_when(
+    n >=0 & n <75 ~ "0 - 75",
+    n >=75 & n <150 ~ "75 - 150",
+    n >=150 & n <225 ~ "150 - 225",
+    n >=225 & n <300 ~ "225 - 300",
+    n >=300 & n <375 ~ "300 - 375",
+    n >=375 & n <450 ~ "375 - 450",
+    n >=450 & n <700 ~ "450+",
+  ),
+  count_buckets =
+    as_factor(count_buckets) %>%
+    fct_relevel(c("0 - 75", 
+                  "75 - 150",
+                  "150 - 225",
+                  "225 - 300",
+                  "300 - 375",
+                  "375 - 450",
+                  "450 - 700"
+                  ))
+  )
+
+
+listing_bucket_counts = airbnb_count_by_zips %>% 
+  filter(!is.na(count_buckets)) %>%
+  st_drop_geometry() %>% 
+  count(count_buckets, .drop = FALSE) %>% 
+  mutate(text = case_when(
+    count_buckets == "450+"  ~ paste0(n, " Zips"),
+    TRUE ~ as.character(n)
+   ))
+
+# Create histogram which will double as legend
+num_listings_histogram_legend = listing_bucket_counts %>% 
+  ggplot(aes(x = n, y = count_buckets, fill = count_buckets)) +
+  geom_col() +
+  scale_x_continuous(expand = expansion(add = c(0, 7))) +
+  # Ensure legend lines up with axis buckets, took a looot of fiddling
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0.11))) +
+  scale_fill_brewer(na.value = "grey90",
+                       palette = "GnBu",
+                       direction = -11,
+                    drop = FALSE) +
+  geom_text(aes(label = text),
+            hjust = -0.1,
+            size = 3,
+            color = "grey60",
+            family = "Lato") +
+  theme_void() +
+  guides(fill = guide_legend(reverse = TRUE,
+                             label.position = "left",
+                             byrow = TRUE)) +
+  theme(
+        legend.title = element_blank(),
+        legend.key.height = unit(0.275, "in"),
+        legend.key.width = unit(0.05, "in"),
+        legend.position = "left",
+        legend.spacing.y = unit(0.015, "in"),
+        legend.margin = margin(0,0,0,0),
+        text = element_text(family = "Lato"),
+        plot.title= element_text(face = "bold", size = 13),
+        # axis.line.y = element_line(),
+        # axis.text.y = element_text(),
+        # axis.text.x = element_text(),
+        # axis.title.x = element_text(),
+        plot.title.position = "plot") +
+  labs(title = "# Listings",
+       x = "Count of Zip Codes")
+
+
+
+# ----- Create choropleth map ----------
+
+# Create bounding box of area for which we have data + 5000 meter buffer
+study_area_box = airbnb_count_by_zips %>% 
+  filter(!is.na(count_buckets)) %>% 
+  st_union() %>% 
+  st_as_sf() %>% 
+  st_buffer(dist = 5000) %>% 
+  st_bbox()
+
+# Crop to buffered region (which is a square)
+airbnb_count_by_zips_cropped = airbnb_count_by_zips %>% 
+  st_crop(study_area_box)
+  
+# Make map
+airbnb_listings_by_zips_plot = airbnb_count_by_zips_cropped %>% 
+  ggplot(aes(fill = count_buckets)) + 
+  geom_sf(color = "white", size = 0.1) +
+  scale_fill_brewer(na.value = "grey90",
+                       palette = "GnBu",
+                       direction = 1) +
+  theme_void() +
+  guides(fill = "none") +
+  theme(plot.margin = margin())
+
+
+
+
+# ----- Paste together with patchwork --------
+
+design = "
+111111111111111111333
+111111111111111111333
+111111111111111111222
+111111111111111111222
+111111111111111111444
+111111111111111111444
+"
+
+airbnb_listings_by_zips_plot + 
+  num_listings_histogram_legend +
+  plot_spacer() +
+  plot_spacer() +
+  plot_layout(design=design)
+
 ```
 
 
-### Map 1.2: Average Airbnb Prices per Zipcode
+### Map 1.2: Average Airbnb Prices in Bay Area Zipcodes
 
 ```{r listing_avg_price_by_zip_map}
+#| fig-width: 7
+#| fig-height: 7
 
 # ----- Calculate avg price by zip ----------
 airbnb_avg_price_by_zips = airbnb_data_with_zips %>% 
@@ -319,31 +552,185 @@ airbnb_avg_price_by_zips = airbnb_data_with_zips %>%
              by = c("zip_final" = "zip")) %>% 
   st_as_sf()
 
-# ----- Create choropleth map ----------
-airbnb_avg_price_by_zips_plot = airbnb_avg_price_by_zips %>% 
-  ggplot(aes(fill = avg_price)) + 
-  geom_sf(color = "white", size = 0.1) +
-  scale_fill_fermenter(na.value = "grey90",
-                       palette = "Oranges",
-                       n.breaks = 6,
-                       direction = 1,
-                       show.limits = TRUE,
-                       labels = scales::dollar_format()) +
-  # scale_fill_steps(high = "magenta", low = "blue", na.value = "grey90") +
-  theme_void() +
-  labs(title = "Average Price of Airbnbs Listings by Zip Code", fill = "Avg Price")
 
-airbnb_avg_price_by_zips_plot
+# ---- Create histogram legend for map -------
+# Create buckets for price for use in histogram
+airbnb_avg_price_by_zips = airbnb_avg_price_by_zips %>% 
+  mutate(avg_price_buckets = case_when(
+    avg_price >=0 & avg_price <75 ~ "$0 - $75",
+    avg_price >=75 & avg_price <150 ~ "$75 - $150",
+    avg_price >=150 & avg_price <225 ~ "$150 - $225",
+    avg_price >=225 & avg_price <300 ~ "$225 - $300",
+    avg_price >=300 & avg_price <375 ~ "$300 - $375",
+    avg_price >=375 & avg_price <450 ~ "$375 - $450",
+    avg_price >=450 & avg_price <700 ~ "$450 - $700",
+  ),
+  avg_price_buckets =
+    as_factor(avg_price_buckets) %>%
+    # fct_expand("$500 - $600") %>%
+    fct_relevel(c("$0 - $75", 
+                  "$75 - $150",
+                  "$150 - $225",
+                  "$225 - $300",
+                  "$300 - $375",
+                  "$375 - $450",
+                  "$450 - $700"
+                  ))
+  )
+
+
+avg_price_bucket_counts = airbnb_avg_price_by_zips %>% 
+  filter(!is.na(avg_price_buckets)) %>%
+  st_drop_geometry() %>% 
+  count(avg_price_buckets, .drop = FALSE) %>% 
+  mutate(text = case_when(
+    avg_price_buckets == "$450 - $700" & n == 1 ~ paste0(n, " Zip"),
+    TRUE ~ as.character(n)
+   ))
+
+avg_price_histogram_legend = avg_price_bucket_counts %>% 
+  ggplot(aes(x = n, y = avg_price_buckets, fill = avg_price_buckets)) +
+  geom_col() +
+  scale_x_continuous(expand = expansion(add = c(0, 7))) +
+  # Ensure legend lines up with axis buckets, took a looot of fiddling
+  scale_y_discrete(expand = expansion(mult = c(0.1, 0.11))) +
+  scale_fill_brewer(na.value = "grey90",
+                       palette = "GnBu",
+                       direction = -11,
+                    drop = FALSE) +
+  geom_text(aes(label = text),
+            hjust = -0.1,
+            size = 3,
+            color = "grey60",
+            family = "Lato") +
+  theme_void() +
+  guides(fill = guide_legend(reverse = TRUE,
+                             label.position = "left",
+                             byrow = TRUE)) +
+  theme(
+        legend.title = element_blank(),
+        legend.key.height = unit(0.275, "in"),
+        legend.key.width = unit(0.05, "in"),
+        legend.position = "left",
+        legend.spacing.y = unit(0.015, "in"),
+        legend.margin = margin(0,0,0,0),
+        text = element_text(family = "Lato"),
+        plot.title= element_text(face = "bold", size = 13),
+        # axis.line.y = element_line(),
+        # axis.text.y = element_text(),
+        # axis.text.x = element_text(),
+        # axis.title.x = element_text(),
+        plot.title.position = "plot") +
+  labs(title = "Avg Listing Price",
+       x = "Count of Zip Codes")
+
+
+
+# ----- Create choropleth map ----------
+
+# Create bounding box of area for which we have data + 5000 meter buffer
+study_area_box = airbnb_avg_price_by_zips %>% 
+  filter(!is.na(avg_price)) %>% 
+  st_union() %>% 
+  st_as_sf() %>% 
+  st_buffer(dist = 5000) %>% 
+  st_bbox()
+
+# Crop to buffered region (which is a square)
+airbnb_avg_price_by_zips_cropped = airbnb_avg_price_by_zips %>% 
+  st_crop(study_area_box)
+  
+# Make map
+airbnb_avg_price_by_zips_plot = airbnb_avg_price_by_zips_cropped %>% 
+  ggplot(aes(fill = avg_price_buckets)) + 
+  geom_sf(color = "white", size = 0.1) +
+  scale_fill_brewer(na.value = "grey90",
+                       palette = "GnBu",
+                       direction = 1) +
+  theme_void() +
+  guides(fill = "none")
+
+
+# ----- Paste together with patchwork --------
+
+
+design = "
+111111111111111111333
+111111111111111111333
+111111111111111111222
+111111111111111111222
+111111111111111111444
+111111111111111111444
+"
+
+airbnb_avg_price_by_zips_plot + 
+  avg_price_histogram_legend +
+  plot_spacer() +
+  plot_spacer() +
+  plot_layout(design=design)
+
 ```
 
 For the demographic Census variables, I choose to look at housing costs (median rent per bedroom) and education levels (percentage of adults with at least a bachelor's degree). 
 
-### Map 2.1: Median Rent in Bay Area
+### Map 2.1: Median Rent in Bay Area by ZCTA
 
 ```{r median_rent_map}
 #| fig-width: 6
 #| fig-height: 7.25
 
+zip_code_demographic_data
+
+
+zips_intersecting_zctas = zip_codes %>% 
+  mutate(zip_area = st_area(.)) %>% 
+  st_intersection(acs_data_raw) %>% 
+  mutate(int_area = st_area(.),
+         prop_of_zip_intersected = int_area/zip_area)
+
+zctas_intersecting_zips = acs_data_raw %>% 
+  mutate(zcta_area = st_area(.)) %>% 
+  st_intersection(zip_codes) %>% 
+  mutate(int_area = st_area(.),
+         prop_of_zcta_intersected = int_area/zcta_area) %>% 
+  arrange(prop_of_zcta_intersected)
+
+
+zctas_intersecting_zips %>%
+  group_by(zc)
+  select(prop_of_zcta_intersected, zcta, zip) %>% 
+  filter(zcta == 94015)
+  slice(10) %>% 
+  mapview()
+
+x = zctas_intersecting_zips %>% 
+  st_drop_geometry() %>% 
+  group_by(zcta) %>% 
+  summarize(total_prop = sum(prop_of_zcta_intersected) %>% units::drop_units()) %>% 
+  ungroup() %>% 
+  arrange(total_prop)  %>% 
+  filter(total_prop >0.| zcta == 94041)
+
+y = x 
+
+acs_data_raw %>% 
+  filter(zcta %in% y$zcta ) %>% 
+  mapview() + mapview(zip_codes, col.regions = "red")
+
+zctas_intersecting_zips %>% select(prop_of_zcta_intersected, zcta_area, int_area) %>% summary()
+
+acs_data_raw %>% st_crop(zip_codes) %>% mapview()
+acs_data_raw %>% 
+  st_join(airbnb_data_cleaned)
+mapview(zips_intersecting_zctas, zcol = "prop_of_zip_intersected") 
+mapview(zctas_intersecting_zips, zcol = "prop_of_zcta_intersected") 
+
+mapview(zctas_intersecting_zips) | mapview(zip_codes, col.regions = "steelblue")
+zip_codes$zip[!zip_codes$zip %in% acs_data_raw$zcta]
+
+zip_codes %>% filter(zip == 94035) %>% mapview()
+acs_data_raw$zcta[acs_data_raw$zcta %in% zip_codes$zip]
+zip_codes %>% nrow()
 # ----- Create raw median rent sf ggplot -------
 median_rent_map = zip_code_demographic_data %>% 
   ggplot(aes(fill = median_rent_e)) +
@@ -436,7 +823,7 @@ median_rent_map +
 
 
 ### Map 2.2: Percentage of 25+ population with Bachelors Degree or Higher in Bay Area
-```{r}
+```{r pct_bach_map}
 #| fig-width: 6
 #| fig-height: 7.25
 
@@ -574,5 +961,27 @@ bach_degree_map +
 # Spatial Analysis
 
 # Conclusion
+
+
+# Appendix
+
+## Appendix A: Relationship between Zip Code and ZCTA boundraies
+
+The below interactive shows the zip code (left side) and ZCTA (right side) boundaries are slightly different. ZCTA are
+
+```{r}
+#| cache = TRUE
+
+
+zip_codes_cropped = zip_codes %>% 
+  st_crop(study_area_box)
+
+acs_data_raw_cropped = acs_data_raw %>% 
+  st_transform("EPSG:7131") %>% 
+  st_crop(study_area_box)
+
+mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")
+
+```
 
 
