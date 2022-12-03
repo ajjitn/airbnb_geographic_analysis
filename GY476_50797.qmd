@@ -267,27 +267,11 @@ acs_data_raw = acs_data_raw %>%
 
 
 ```{r perform_spatial_join}
+#| cache = TRUE
 
-# ---- Define Study Area -------
+# ----- Append ZCTA information to listings -------
 
-# Define study area as airbnb locations bounding box + buffer
-study_area_box = airbnb_data_projected %>%
-  # Since CRS is in meters, this is 500 meter boundingbox
-  # st_buffer(dist = 500) %>% 
-  st_bbox() 
-
-# Limit ZCTA data to this bounding box
-acs_data_cropped = acs_data_raw %>% 
-  mutate(zcta_area = st_area(.)) %>% 
-  st_crop(study_area_box)
-
-zcta_in_bbox = acs_data_cropped %>% st_drop_geometry() %>% pull(zcta) %>% unique()
-
-mapview(acs_data_raw %>% filter(zcta %in% zcta_in_bbox)) | mapview(acs_data_cropped, col.regions = "steelblue")
-
-mapview(acs_zctas_with_airbnbs) |  mapview(acs_data_cropped, col.regions = "steelblue")
-
-# ----- Perform Spatial Join -------
+# Perform spatial join, which accurately joins most listings to a zcta
 airbnb_data_joined = airbnb_data_projected %>% 
   # st_join(zip_code_demographic_data %>% select(zip, po_name), 
   #         left_join = TRUE) %>% 
@@ -299,90 +283,58 @@ airbnb_data_joined = airbnb_data_projected %>%
 
 
 # There are 24 listings which aren't joined to a zcta, lets instead match those 
-# if they're within 500 meters of a zcta
+# if they're within 500 meters of a zcta. This allows all the listings to be 
+# assigned to a zcta succesfully
 problematic_listings_matched_zctas = airbnb_data_joined %>% 
-  filter(is.na(zcta)) %>%
-  st_is_within_distance(acs_data_raw, 400) %>%
-  # Above returns either index if match is found or an empty set if no matches.
-  # Take first index (ie closest matching zcta index) and extract actual zcta
-  # value from acs_data_raw
-  map(~acs_data_raw %>% 
-        slice(.x) %>% 
-        pull(zcta)) %>%
-  # Convert empty set to NA so we can easily append to our data
-  map(
-  ~ifelse(is_empty(.x), 
-           NA_integer_, 
-           .x)
-  ) %>% 
-  unlist() %>% 
-  as_tibble_col(column_name = "zcta_corrected") %>% 
-  mutate(id = airbnb_data_joined %>% 
-           filter(is.na(zcta)) %>% 
-           pull(id)
-         )
-
-airbnb_data_corrected = airbnb_data_joined %>% 
-  left_join(problematic_listings_matched_zctas, 
-            by = "id") %>% 
-  mutate(zcta_final = coalesce(zcta, zcta_corrected)) 
-  # removes the 20 unmatched listings
-
-
-airbnb_data_corrected %>% 
-  filter(is.na(zcta_final)) %>% 
-  mapview() + mapview(acs_data_cropped, col.regions = "steelblue")
-
-
- 
-
-list_zctas_in_airbnb_data = airbnb_data_joined %>% 
-  select(zcta) %>% 
-  st_drop_geometry() %>% 
-  pull(zcta) %>% 
-  unique()
-
-acs_zctas_with_airbnbs = acs_data_raw %>% 
-  filter(zcta %in% zctas_in_airbnb_data) 
-
-x = airbnb_data_joined %>% 
+  filter(is.na(zcta)) %>% 
+  # Drop zcta colummn so we can take it from the acs_data_raw df after join
+  select(-zcta) %>% 
   st_join(acs_data_raw %>% 
-            select(zcta, median_rent_e, pct_bach_higher_e, unemp_rate_16_plus_e),
-          left_join = TRUE
+            select(zcta),
+          left = TRUE,
+          # Use nearest neighbor join to return closest zcta to point
+          nngeo::st_nn, 
+          # Set max distance of 500 meters
+          maxdist = 500, 
+          k = 1,
+          progress = TRUE
   )
 
 
-mapview(acs_data_raw %>% st_crop(airbnb_data_projected))
-x %>% 
-  filter(is.na(zcta)) %>% 
-  mapview() | mapview(acs_data_raw %>% st_crop(airbnb_data_projected))
+# Remove unmatched listings from data, and append with newly matched listings
+airbnb_data_corrected = airbnb_data_joined %>% 
+  filter(!is.na(zcta)) %>% 
+  bind_rows(problematic_listings_matched_zctas)
 
 
-mapview(acs_data_raw %>% st_crop(airbnb_data_projected))
-                                                                                    
-                                                                                    
-# There are 32 listings which aren't joined, lets instead match those if they're 
-# within 100 meters of a zip code
-problematic_listings_matched_zipcodes = airbnb_data_joined %>% 
-  filter(is.na(zcta)) %>% 
-  st_is_within_distance(zip_code_demographic_data, 100) %>%
-  # Above returns either index if match is found or an empty set if no matches.
-  # Use the index to extract actual zip code value from zip_codes
-  map(~zip_code_demographic_data %>% 
-        slice(.x) %>% 
-        pull(zip)) %>%
-  # Convert empty set to NA so we can easily append to our data
-  map(
-  ~ifelse(is_empty(.x), 
-           NA_integer_, 
-           .x)
-  ) %>% 
-  unlist() %>% 
-  as_tibble_col(column_name = "zip_corrected") %>% 
-  mutate(id = airbnb_data_joined %>% 
-           filter(is.na(zip)) %>% 
-           pull(id)
-         )
+
+# ---- Define Study Area -------
+
+# Get shapefiles of all ZCTAs with at least 1 airbnb
+acs_zctas_with_airbnbs = acs_data_raw %>% 
+  filter(zcta %in% unique(airbnb_data_corrected$zcta) ) 
+
+# Define study area to be the bbox of the zctas with at least 1 airnb
+study_area_box = acs_zctas_with_airbnbs %>%
+  st_bbox() 
+
+# Expanding left and right part of bounding box by 10%/20%  to provide more 
+# context and to make map shape more square
+xrange <- study_area_box$xmax - study_area_box$xmin # range of x values
+yrange <- study_area_box$ymax - study_area_box$ymin # range of y values
+
+study_area_box[1] <- study_area_box[1] - (0.2 * xrange) # xmin - left
+# adj_study_area_box[2] <- study_area_box[2] - (0.5 * yrange) # ymin - bottom
+study_area_box[3] <- study_area_box[3] + (0.1 * xrange) # xmax - right
+# adj_study_area_box[4] <- study_area_box[4] + (0.5 * yrange) # ymax - top
+
+# ---- Cropping ZCTA data to study area ------
+
+# Limit ZCTA data to study area
+acs_data_cropped = acs_data_raw %>% 
+  st_crop(study_area_box)
+
+
 
 # Append the problematic listings with corrected zips back. 
 # For listing still wihtout zips (there are 20) we drop them from the rest of 
