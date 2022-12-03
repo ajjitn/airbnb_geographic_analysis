@@ -115,29 +115,31 @@ zip_codes = st_read(fpath, quiet = TRUE) %>%
 # ---- ACS and ZCTA data
 
 # Use get_acs from tidycensus
-acs_data_raw = get_acs(
-                   # Get zcta level variables
-                   geography = "zcta",
-                   # Got these variable names by perusing data.census.gov website
-                   variables = c(median_rent = "B25031_001",
-                                 median_rent_as_pct_of_income = "B25071_001",
-                                 unemp_rate_16_plus = "S2301_C04_001",
-                                 num_bach_higher = "B23006_023",
-                                 num_25_64_for_bach_higher = "B23006_001"
-                                 # median_rent_no_bedroom = "B25031_002",
-                                 # median_rent_1_bedroom = "B25031_003",
-                                 # median_rent_2_bedroom ="B25031_004",
-                                 # median_rent_3_bedroom = "B25031_005"
-                                 ),
-                   year = 2020,
-                   survey = "acs5",
-                   output = "wide",
-                   # Allows us to get ZCTA geometries as sf dataframes
-                   geometry = TRUE,
-                   quiet = TRUE
-) 
-
-acs_data_raw = acs_data_raw %>%
+# Census servers often go down and get_acs fails intermittenetly. So if that
+# happens read in local copy as backup
+acs_data_raw = tryCatch(
+  expr = {
+    suppressMessages(get_acs(
+                       # Get zcta level variables
+                       geography = "zcta",
+                       # Got these variable names by perusing data.census.gov website
+                       variables = c(median_rent = "B25031_001",
+                                     median_rent_as_pct_of_income = "B25071_001",
+                                     unemp_rate_16_plus = "S2301_C04_001",
+                                     num_bach_higher = "B23006_023",
+                                     num_25_64_for_bach_higher = "B23006_001"
+                                     # median_rent_no_bedroom = "B25031_002",
+                                     # median_rent_1_bedroom = "B25031_003",
+                                     # median_rent_2_bedroom ="B25031_004",
+                                     # median_rent_3_bedroom = "B25031_005"
+                                     ),
+                       year = 2020,
+                       survey = "acs5",
+                       output = "wide",
+                       # Allows us to get ZCTA geometries as sf dataframes
+                       geometry = TRUE,
+                       quiet = TRUE
+    ) %>%
   janitor::clean_names() %>%
   # Calculate pct bach or higher using num and denom
   mutate(pct_bach_higher_e = num_bach_higher_e/num_25_64_for_bach_higher_e,
@@ -147,7 +149,16 @@ acs_data_raw = acs_data_raw %>%
            moe_num = num_bach_higher_m, 
            moe_denom = num_25_64_for_bach_higher_m
          )) %>%
-  rename(zcta = geoid)
+  rename(zcta = geoid))
+  },
+  error = function (e) {
+    st_read("data/acs_zcta_data_raw_saved.geojson", quiet = TRUE)
+  },
+  warning = function (w) {
+    st_read("data/acs_zcta_data_raw_saved.geojson", quiet = TRUE)
+  }
+  )
+
 
 # We will use acs_data in appendix to see how boundaries
 acs_data = acs_data_raw %>% 
@@ -247,6 +258,8 @@ I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for
 
 
 ```{r projecting_data}
+#| cache = TRUE
+
 airbnb_data_projected = airbnb_data_cleaned %>% 
   st_transform("EPSG:7131")
   
@@ -297,7 +310,7 @@ problematic_listings_matched_zctas = airbnb_data_joined %>%
           # Set max distance of 500 meters
           maxdist = 500, 
           k = 1,
-          progress = TRUE
+          progress = FALSE
   )
 
 
@@ -324,9 +337,9 @@ xrange <- study_area_box$xmax - study_area_box$xmin # range of x values
 yrange <- study_area_box$ymax - study_area_box$ymin # range of y values
 
 study_area_box[1] <- study_area_box[1] - (0.25 * xrange) # xmin - left
-adj_study_area_box[2] <- study_area_box[2] - (0.05 * yrange) # ymin - bottom
+study_area_box[2] <- study_area_box[2] - (0.05 * yrange) # ymin - bottom
 study_area_box[3] <- study_area_box[3] + (0.15 * xrange) # xmax - right
-adj_study_area_box[4] <- study_area_box[4] + (0.05 * yrange) # ymax - top
+study_area_box[4] <- study_area_box[4] + (0.05 * yrange) # ymax - top
 
 # ---- Cropping ZCTA data to study area ------
 
@@ -426,7 +439,7 @@ num_listings_histogram_legend = listing_bucket_counts %>%
                              byrow = TRUE)) +
   theme(
         legend.title = element_blank(),
-        legend.key.height = unit(0.275, "in"),
+        legend.key.height = unit(0.233, "in"),
         legend.key.width = unit(0.05, "in"),
         legend.position = "left",
         legend.spacing.y = unit(0.015, "in"),
@@ -542,7 +555,7 @@ avg_price_bucket_counts = airbnb_avg_price_by_zcta %>%
   st_drop_geometry() %>% 
   count(avg_price_buckets, .drop = FALSE) %>% 
   mutate(text = case_when(
-    avg_price_buckets == "$450 - $700" & n == 1 ~ paste0(n, " Zip"),
+    avg_price_buckets == "$450 - $700" ~ paste0(n, " Zips"),
     TRUE ~ as.character(n)
    ))
 
@@ -625,84 +638,71 @@ For the demographic Census variables, I choose to look at housing costs (median 
 #| fig-width: 6
 #| fig-height: 7.25
 
-airbnb_avg_price_by_zcta
-
-zips_intersecting_zctas = zip_codes %>% 
-  mutate(zip_area = st_area(.)) %>% 
-  st_intersection(acs_data_raw) %>% 
-  mutate(int_area = st_area(.),
-         prop_of_zip_intersected = int_area/zip_area)
-
-zctas_intersecting_zips = acs_data_raw %>% 
-  mutate(zcta_area = st_area(.)) %>% 
-  st_intersection(zip_codes) %>% 
-  mutate(int_area = st_area(.),
-         prop_of_zcta_intersected = int_area/zcta_area) %>% 
-  arrange(prop_of_zcta_intersected)
+# Create indicator for whether a zcta is in study area or not
+acs_zcta_polygons = acs_zcta_polygons %>% 
+  mutate(in_study_area = case_when(
+    !is.na(num_listings) ~ TRUE,
+    is.na(num_listings) ~ FALSE,
+    TRUE ~ NA
+  ))
 
 
-zctas_intersecting_zips %>%
-  group_by(zc)
-  select(prop_of_zcta_intersected, zcta, zip) %>% 
-  filter(zcta == 94015)
-  slice(10) %>% 
-  mapview()
 
-x = zctas_intersecting_zips %>% 
-  st_drop_geometry() %>% 
-  group_by(zcta) %>% 
-  summarize(total_prop = sum(prop_of_zcta_intersected) %>% units::drop_units()) %>% 
-  ungroup() %>% 
-  arrange(total_prop)  %>% 
-  filter(total_prop >0.| zcta == 94041)
-
-y = x 
-
-acs_data_raw %>% 
-  filter(zcta %in% y$zcta ) %>% 
-  mapview() + mapview(zip_codes, col.regions = "red")
-
-zctas_intersecting_zips %>% select(prop_of_zcta_intersected, zcta_area, int_area) %>% summary()
-
-acs_data_raw %>% st_crop(zip_codes) %>% mapview()
-acs_data_raw %>% 
-  st_join(airbnb_data_cleaned)
-mapview(zips_intersecting_zctas, zcol = "prop_of_zip_intersected") 
-mapview(zctas_intersecting_zips, zcol = "prop_of_zcta_intersected") 
-
-mapview(zctas_intersecting_zips) | mapview(zip_codes, col.regions = "steelblue")
-zip_codes$zip[!zip_codes$zip %in% acs_data_raw$zcta]
-
-zip_codes %>% filter(zip == 94035) %>% mapview()
-acs_data_raw$zcta[acs_data_raw$zcta %in% zip_codes$zip]
-zip_codes %>% nrow()
+# acs_zcta_polygons_study_area_adjusted %>% mapview(zcol)
+# 
+# acs_zcta_polygons %>% filter(is.na(median_rent_e)) %>% mapview()
 
 # ----- Create raw median rent sf ggplot -------
-median_rent_map = zip_code_demographic_data %>% 
+median_rent_map = acs_zcta_polygons %>% 
+  filter(in_study_area) %>% 
   ggplot(aes(fill = median_rent_e)) +
-  geom_sf(color = "white", size = 0.1) +
+  geom_sf(color = "white", 
+          size = 0.1) +
   scale_fill_viridis_c(
                     labels = scales::dollar_format(),
                     direction = 1,
-                    na.value = "grey90",
+                    na.value = "grey70",
                     guide = guide_colorbar(
                       title.vjust = 6,
                       label.position = "left",
-                      barheight = 14.5)
+                      barheight = 14.5,
+                      order =1
+                      )
                     ) +
+    # Hacky solution to force ggplot to include NA in legend scale, create 
+    # blank color aesthetic for a tiny zcta, and then override aesthetics in 
+    # guide to match NA colro values
+    geom_sf(data= acs_zcta_polygons %>%
+            filter(zcta == 94517),
+            size = 0.1,
+          aes(color = "NA")) +
+    scale_color_manual(values = NA) +
+    guides(colour=guide_legend("", 
+                               override.aes=list(colour="grey70", fill = "grey70"),
+                               label.position = "left",
+                               order =2)) +
+    geom_sf(data = acs_zcta_polygons %>% 
+            filter(!in_study_area),
+          fill = "grey90",
+          color = "white") +
   labs(fill = "Median Rent") +
   # scale_fill_steps(high = "magenta", low = "blue", na.value = "grey90") +
   theme_void()  +
   theme(text = element_text(family = "Lato"),
       legend.title = element_text(size = 14, face = "bold.italic"),
       legend.text = element_text(size = 10),
-      # legend.title = element_blank()
+      # legend.box.just = "right",
+      # legend.text.align = 0
       )
+
+# median_rent_map
 
 # ----- Generate density histogram for median rent -------
 
 # Generate density matrix for our variable, and convert into df
-median_rent_density = zip_code_demographic_data$median_rent_e %>% 
+median_rent_density = acs_zcta_polygons %>% 
+  filter(in_study_area) %>%
+  pull(median_rent_e) %>% 
   na.omit() %>% 
   stats::density()
 
@@ -732,24 +732,24 @@ median_rent_density_line = median_rent_density_df %>%
                   direction = 1,
                   na.value = "grey90"
                   ) +
+  scale_x_continuous(expand = expansion(mult = c(0.065, 0.23))) +
   coord_flip() +
   theme_void() +
   guides(color = "none") +
   theme(
-    plot.margin = unit(c(1,0,0.7,0), "inches"),
+    plot.margin = unit(c(0,0,0,0), "inches"),
     axis.title = element_blank(),
     axis.text = element_blank(),
-    axis.ticks = element_blank(), 
     axis.line = element_blank(),
     axis.ticks.length =  unit(0, "pt")
   )
-
+# median_rent_density_line
 # ----- Paste everything together with library(patchwork) -------
 
 design <- "
 11111111111111111444
 11111111111111111444
-11111111111111111233
+11111111111111111633
 11111111111111111233
 11111111111111111233
 11111111111111111233
@@ -760,6 +760,7 @@ design <- "
 median_rent_map +
   guide_area() + 
   median_rent_density_line + 
+  plot_spacer() +
   plot_spacer() +
   plot_spacer() +
   plot_layout(design=design, guides = "collect")
@@ -775,32 +776,56 @@ median_rent_map +
 
 
 # ----- Create raw % Bachelors sf ggplot -------
-bach_degree_map = zip_code_demographic_data %>% 
+
+bach_degree_map = acs_zcta_polygons %>% 
+  filter(in_study_area) %>% 
   ggplot(aes(fill = pct_bach_higher_e)) +
   geom_sf(color = "white", 
           size = 0.1) +
   scale_fill_viridis_c(
                     labels = scales::percent_format(),
                     direction = 1,
-                    na.value = "grey90",
+                    na.value = "grey70",
                     guide = guide_colorbar(
                       title.vjust = 6,
                       label.position = "left",
-                      barheight = 14.5)
+                      barheight = 14.5,
+                      order =1
+                      )
                     ) +
-  labs(fill = str_wrap("% Bachelors", width = 20)) +
-  theme_void() +
+    # Don't need this hack to get NA in legend bc there are no NA values for this 
+    # ACS variable
+    # geom_sf(data= acs_zcta_polygons %>% 
+    #         filter(zcta == 94517),
+    #         size = 0.1,
+    #       aes(color = "NA")) +
+    # scale_color_manual(values = NA) +
+    # guides(colour=guide_legend("", 
+    #                            override.aes=list(colour="grey70", fill = "grey70"),
+    #                            label.position = "left",
+    #                            order =2)) +
+    geom_sf(data = acs_zcta_polygons %>% 
+            filter(!in_study_area),
+          fill = "grey90",
+          color = "white") +
+  labs(fill = str_wrap(" % Bach. " ))  +
+  # scale_fill_steps(high = "magenta", low = "blue", na.value = "grey90") +
+  theme_void()  +
   theme(text = element_text(family = "Lato"),
-        legend.title = element_text(size = 14, face = "bold.italic"),
-        legend.text = element_text(size = 10),
-        # legend.title = element_blank()
-        )
-
+      legend.title = element_text(size = 14, face = "bold.italic"),
+      legend.text = element_text(size = 10),
+      legend.box.just = "right",
+      legend.text.align = 0
+      # legend.title = element_blank()
+      )
 
 # ----- Generate density histogram for % bach -------
 
 # Generate density matrix for our variable, and convert into df
-pct_bach_higher_density = zip_code_demographic_data$pct_bach_higher_e %>% 
+pct_bach_higher_density = acs_zcta_polygons %>% 
+  filter(in_study_area) %>%
+  pull(pct_bach_higher_e) %>% 
+  na.omit() %>% 
   stats::density()
 
 pct_bach_higher_density_df = tribble(~pct_bach_higher_e, ~density,
@@ -831,11 +856,13 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
                   direction = 1,
                   na.value = "grey90"
                   ) +
+  # Fiddled with these numbers until the density plot aligned with legend
+  scale_x_continuous(expand = expansion(mult = c(0.11, 0.19))) +
   coord_flip() +
   theme_void() +
   guides(color = "none") +
   theme(
-    plot.margin = unit(c(1,0,0.7,0), "inches"),
+    plot.margin = unit(c(0,0,0,0), "inches"),
     axis.title = element_blank(),
     axis.text = element_blank(),
     axis.ticks = element_blank(), 
@@ -865,40 +892,6 @@ bach_degree_map +
   plot_layout(design=design, guides = "collect")
 
 
-# Create column for pct_bach_breaks, will be used for coloring in histogram
-# zip_code_demographic_data$pct_bach_breaks <- cut(zip_code_demographic_data$pct_bach_higher_e, 
-#                                                  breaks = seq(0, 1, 0.1))
-# 
-# zip_code_demographic_data %>% 
-#   ggplot(aes(y = pct_bach_higher_e,
-#              fill = pct_bach_higher_e,
-#             # group = 1
-#              )
-#          ) +
-#   geom_density(n = 512, bw = "SJ")
-#   # geom_freqpoly() 
-#   geom_histogram(bins = 70)
-#   geom_histogram(binwidth = 0.1,
-#                  boundary = 0,
-#                  closed = "left",
-#                  size = 0.5,
-#                  color = "white") +
-#   scale_fill_ordinal(
-#               # low = "red",
-#               # high = "green",
-#               # palette = "Greens",
-#               direction = 1,
-#               na.value = "grey20"
-#               ) +
-#   scale_y_continuous(
-#     # breaks = seq(0, 1, 0.1),
-#     labels = scales::percent_format()) +
-#   guides(fill = "none")
-# 
-#   
-
-
-
 
 ```
 
@@ -919,14 +912,14 @@ The below interactive shows the zip code (left side) and ZCTA (right side) bound
 #| cache = TRUE
 
 
-zip_codes_cropped = zip_codes %>% 
-  st_crop(study_area_box)
-
-acs_data_raw_cropped = acs_data_raw %>% 
-  st_transform("EPSG:7131") %>% 
-  st_crop(study_area_box)
-
-mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")
+# zip_codes_cropped = zip_codes %>% 
+#   st_crop(study_area_box)
+# 
+# acs_data_raw_cropped = acs_data_raw %>% 
+#   st_transform("EPSG:7131") %>% 
+#   st_crop(study_area_box)
+# 
+# mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")
 
 ```
 
