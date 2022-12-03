@@ -318,15 +318,15 @@ acs_zctas_with_airbnbs = acs_data_raw %>%
 study_area_box = acs_zctas_with_airbnbs %>%
   st_bbox() 
 
-# Expanding left and right part of bounding box by 10%/20%  to provide more 
+# Expanding bounding box by a little bit to provide more 
 # context and to make map shape more square
 xrange <- study_area_box$xmax - study_area_box$xmin # range of x values
 yrange <- study_area_box$ymax - study_area_box$ymin # range of y values
 
-study_area_box[1] <- study_area_box[1] - (0.2 * xrange) # xmin - left
-# adj_study_area_box[2] <- study_area_box[2] - (0.5 * yrange) # ymin - bottom
-study_area_box[3] <- study_area_box[3] + (0.1 * xrange) # xmax - right
-# adj_study_area_box[4] <- study_area_box[4] + (0.5 * yrange) # ymax - top
+study_area_box[1] <- study_area_box[1] - (0.25 * xrange) # xmin - left
+adj_study_area_box[2] <- study_area_box[2] - (0.05 * yrange) # ymin - bottom
+study_area_box[3] <- study_area_box[3] + (0.15 * xrange) # xmax - right
+adj_study_area_box[4] <- study_area_box[4] + (0.05 * yrange) # ymax - top
 
 # ---- Cropping ZCTA data to study area ------
 
@@ -334,19 +334,9 @@ study_area_box[3] <- study_area_box[3] + (0.1 * xrange) # xmax - right
 acs_data_cropped = acs_data_raw %>% 
   st_crop(study_area_box)
 
-
-
-# Append the problematic listings with corrected zips back. 
-# For listing still wihtout zips (there are 20) we drop them from the rest of 
-# the analysis
-airbnb_data_with_zips = airbnb_data_joined %>% 
-  left_join(problematic_listings_matched_zipcodes, 
-            by = "id") %>% 
-  mutate(zip_final = coalesce(zip, zip_corrected)) %>% 
-  # removes the 20 unmatched listings
-  filter(!is.na(zip_final))
-
-
+# ---- Define final datasets -----
+airbnb_points = airbnb_data_corrected
+acs_zcta_polygons = acs_data_cropped
 ```
 
 ### Map 1.1: Airbnb Listings per Zipcode
@@ -357,20 +347,18 @@ airbnb_data_with_zips = airbnb_data_joined %>%
 #| fig-height: 7
 
 
-# ----- Count airbnb listings by zip ----------
-airbnb_count_by_zips = airbnb_data_with_zips %>% 
+# ----- Count airbnb listings by zcta ----------
+airbnb_count_by_zcta = airbnb_points %>% 
   st_drop_geometry() %>% 
-  count(zip_final, sort = TRUE) %>% 
-  right_join(zip_codes, 
-             by = c("zip_final" = "zip")) %>% 
+  count(zcta, sort = TRUE) %>% 
+  right_join(acs_zcta_polygons, 
+             by = c("zcta")) %>% 
+  select(n, zcta, geometry) %>% 
   st_as_sf()
 
 
-
-# ---- Create histogram legend for map -------
-
 # Create buckets for price for use in histogram
-airbnb_count_by_zips = airbnb_count_by_zips %>% 
+airbnb_count_by_zcta = airbnb_count_by_zcta %>% 
   mutate(count_buckets = case_when(
     n >=0 & n <75 ~ "0 - 75",
     n >=75 & n <150 ~ "75 - 150",
@@ -378,7 +366,8 @@ airbnb_count_by_zips = airbnb_count_by_zips %>%
     n >=225 & n <300 ~ "225 - 300",
     n >=300 & n <375 ~ "300 - 375",
     n >=375 & n <450 ~ "375 - 450",
-    n >=450 & n <700 ~ "450+",
+    n >=450 & n <525 ~ "450 - 525",
+    n >=525 ~ "525 +"
   ),
   count_buckets =
     as_factor(count_buckets) %>%
@@ -388,17 +377,30 @@ airbnb_count_by_zips = airbnb_count_by_zips %>%
                   "225 - 300",
                   "300 - 375",
                   "375 - 450",
-                  "450 - 700"
+                  "450 - 525",
+                  "525 +"
                   ))
   )
 
+# Append num listings per zcta back to zcta dataframe
+acs_zcta_polygons = acs_zcta_polygons %>% 
+  left_join(
+    airbnb_count_by_zcta %>% 
+      st_drop_geometry() %>% 
+      select(num_listings = n, 
+             zcta),
+    by = "zcta"
+  )
 
-listing_bucket_counts = airbnb_count_by_zips %>% 
+# ---- Create histogram legend for map -------
+
+
+listing_bucket_counts = airbnb_count_by_zcta %>% 
   filter(!is.na(count_buckets)) %>%
   st_drop_geometry() %>% 
   count(count_buckets, .drop = FALSE) %>% 
   mutate(text = case_when(
-    count_buckets == "450+"  ~ paste0(n, " Zips"),
+    count_buckets == "525 +"  ~ paste0(n, " Zips"),
     TRUE ~ as.character(n)
    ))
 
@@ -443,20 +445,9 @@ num_listings_histogram_legend = listing_bucket_counts %>%
 
 # ----- Create choropleth map ----------
 
-# Create bounding box of area for which we have data + 5000 meter buffer
-study_area_box = airbnb_count_by_zips %>% 
-  filter(!is.na(count_buckets)) %>% 
-  st_union() %>% 
-  st_as_sf() %>% 
-  st_buffer(dist = 5000) %>% 
-  st_bbox()
 
-# Crop to buffered region (which is a square)
-airbnb_count_by_zips_cropped = airbnb_count_by_zips %>% 
-  st_crop(study_area_box)
-  
 # Make map
-airbnb_listings_by_zips_plot = airbnb_count_by_zips_cropped %>% 
+airbnb_listings_by_zips_plot = airbnb_count_by_zcta %>% 
   ggplot(aes(fill = count_buckets)) + 
   geom_sf(color = "white", size = 0.1) +
   scale_fill_brewer(na.value = "grey90",
@@ -495,19 +486,23 @@ airbnb_listings_by_zips_plot +
 #| fig-width: 7
 #| fig-height: 7
 
-# ----- Calculate avg price by zip ----------
-airbnb_avg_price_by_zips = airbnb_data_with_zips %>% 
+# ----- Calculate avg price by zcta ----------
+
+airbnb_avg_price_by_zcta = airbnb_points %>% 
   st_drop_geometry() %>% 
-  group_by(zip_final) %>% 
+  group_by(zcta) %>% 
   summarize(avg_price = mean(price)) %>% 
-  right_join(zip_codes, 
-             by = c("zip_final" = "zip")) %>% 
+  ungroup() %>% 
+  right_join(acs_zcta_polygons, 
+             by = c("zcta")) %>% 
+  select(avg_price, zcta, geometry) %>% 
   st_as_sf()
 
+# Look at histogram for designing cut points
+# airbnb_avg_price_by_zcta$avg_price %>% hist()
 
-# ---- Create histogram legend for map -------
 # Create buckets for price for use in histogram
-airbnb_avg_price_by_zips = airbnb_avg_price_by_zips %>% 
+airbnb_avg_price_by_zcta = airbnb_avg_price_by_zcta %>% 
   mutate(avg_price_buckets = case_when(
     avg_price >=0 & avg_price <75 ~ "$0 - $75",
     avg_price >=75 & avg_price <150 ~ "$75 - $150",
@@ -530,8 +525,19 @@ airbnb_avg_price_by_zips = airbnb_avg_price_by_zips %>%
                   ))
   )
 
+# Append num listings per zcta back to zcta dataframe
+acs_zcta_polygons = acs_zcta_polygons %>% 
+  left_join(
+    airbnb_avg_price_by_zcta %>% 
+      st_drop_geometry() %>% 
+      select(avg_price, 
+             zcta),
+    by = "zcta"
+  )
 
-avg_price_bucket_counts = airbnb_avg_price_by_zips %>% 
+# ---- Create histogram legend for map -------
+
+avg_price_bucket_counts = airbnb_avg_price_by_zcta %>% 
   filter(!is.na(avg_price_buckets)) %>%
   st_drop_geometry() %>% 
   count(avg_price_buckets, .drop = FALSE) %>% 
@@ -579,21 +585,9 @@ avg_price_histogram_legend = avg_price_bucket_counts %>%
 
 
 # ----- Create choropleth map ----------
-
-# Create bounding box of area for which we have data + 5000 meter buffer
-study_area_box = airbnb_avg_price_by_zips %>% 
-  filter(!is.na(avg_price)) %>% 
-  st_union() %>% 
-  st_as_sf() %>% 
-  st_buffer(dist = 5000) %>% 
-  st_bbox()
-
-# Crop to buffered region (which is a square)
-airbnb_avg_price_by_zips_cropped = airbnb_avg_price_by_zips %>% 
-  st_crop(study_area_box)
   
 # Make map
-airbnb_avg_price_by_zips_plot = airbnb_avg_price_by_zips_cropped %>% 
+airbnb_avg_price_by_zips_plot = airbnb_avg_price_by_zcta %>% 
   ggplot(aes(fill = avg_price_buckets)) + 
   geom_sf(color = "white", size = 0.1) +
   scale_fill_brewer(na.value = "grey90",
@@ -631,8 +625,7 @@ For the demographic Census variables, I choose to look at housing costs (median 
 #| fig-width: 6
 #| fig-height: 7.25
 
-zip_code_demographic_data
-
+airbnb_avg_price_by_zcta
 
 zips_intersecting_zctas = zip_codes %>% 
   mutate(zip_area = st_area(.)) %>% 
@@ -683,6 +676,7 @@ zip_codes$zip[!zip_codes$zip %in% acs_data_raw$zcta]
 zip_codes %>% filter(zip == 94035) %>% mapview()
 acs_data_raw$zcta[acs_data_raw$zcta %in% zip_codes$zip]
 zip_codes %>% nrow()
+
 # ----- Create raw median rent sf ggplot -------
 median_rent_map = zip_code_demographic_data %>% 
   ggplot(aes(fill = median_rent_e)) +
