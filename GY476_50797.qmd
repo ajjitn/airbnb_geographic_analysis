@@ -4,15 +4,17 @@ format:
   html:
     code-fold: true
     code-summary: "Show the code"
-    fig-width: 8
-    fig-height: 8
-
+    fig-width: 7
+    fig-height: 7
+    toc: true
 execute:
   warning: false
   error: false
   message: false
 editor_options: 
   chunk_output_type: console
+bibliography: references.bib
+
 ---
 
 # Introduction
@@ -25,6 +27,7 @@ editor_options:
 library(tidyverse)
 library(sf)
 library(tidylog)
+library(osmdata)
 library(mapview)
 library(tmap)
 # For painless filepath pointing
@@ -34,6 +37,7 @@ library(tidycensus)
 library(leaflet.extras2)
 library(paletteer)
 library(ggpubr)
+library(RColorBrewer)
 library(patchwork)
 library(grid)
 library(geomtextpath)
@@ -45,9 +49,10 @@ library(nngeo)
 ```
 
 ```{r data_read_in}
+#| output: false
 #| cache: true
 
-#----- Read in data -------------
+#----- Read in data ------------
 
 # ---- Airbnb data
 
@@ -164,50 +169,45 @@ acs_data_raw = tryCatch(
 acs_data = acs_data_raw %>% 
   st_drop_geometry()
 
+# --- OSM Data
+
+# build a query
+query <- opq(bbox = "San Francisco Bay Area") |> 
+  add_osm_feature(key = "amenity", value = "bicycle_rental")
+
+bike_rental_locations_osm <- osmdata_sf(query)
+
+bike_rental_points = bike_rental_locations_osm$osm_points %>% 
+  as_tibble() %>% 
+  st_as_sf()
 
 ```
 
 
 # Data Discussion 
 
-
-## Preparing the data
-
+## Dataset Overview
 I make use of 4 datasets in this project:
 
-1) Airbnb data: This is a periodically published snapshot of AirBnB listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We programmatically download the zipped csc files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the `r nrow(airbnb_data)` total listings.
+1) Airbnb data: This is a periodically published snapshot of Airbnb listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We programmatically download the zipped csv files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the `r nrow(airbnb_data)` total listings.
 
-2) Bay Area Zipcode data: These are shapefiles of the 187 zip codes which comprise the Bay Area and was downloaded programmatically from the [Berkeley Geodata Library](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q). 
+2) ACS Demographic Data: Using `library(tidycensus)` we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Specifically we look at the Median Rent per bedroom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor's degree was calculated from Census Table B23006. And in line with Census recommendations, we use the number of adults over the age of 25 for the denominator of this percentage. 
 
-3) ACS Demographic Data: Using `library(tidycensus)` we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Th3 5 year survey contains average values from 5 years of data collection in order to procide robust and precise esimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align  with the Airbmb data which are scra 
+The 5 year ACS survey contains average values from 5 years of data collection in order to provide robust and precise estimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align with the airbnb data which was scraped in 2022, but is likely still the best estimate of the demographic composition of these neighborhoods.
 
-Specifically we look at the Median Rent per bedrooom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor's degree was calculated from Census Table
+ZCTAs are generalized representations of zip codes, and in most cases are very similar to zip codes . But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively (see Appendix A for a detailed comparison). For the sake of standardization, in this paper we will always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. And whenever I refer to "zip codes", these will always mean Zip Code Tabulation Areas. If we had used USPS zip code level geographies (like [this data](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q) from Berkeley Geodata library) we would have to find a way to merge zip codes to ZCTA's and deal with zip codes that fall into multiple ZCTA's when working with ACS data. 
 
-ZCTAs are generalized representations of zip codes, and in most cases are very close zip codes. Sometimes a zip code may not have a corresponding ZCTA. In our case of the Bay Area, there is one zip code in Mountain View which does not have a corresonding ZCTA which we remove from our analysis. 
 
-3) OSM Amenity Data
+3) OSM Bike Rental Location : Using the overpass API and `library(osmdata)` in R, we download OSM Amenity data on bike rental stations in the Bay Area. These are user reported point locations of where bike stations are located in Open Street Map and include both private and municipial bike rental locations. 
 
 ## Data Cleaning
 
 For the Airbnb data, we convert the `price` column from a character vector into a numeric vector by removing commas, and `$` signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection see that most of these listing don't have any reviews and may not be real, justifying our decision.
 
-First we perform a spatial join to see how many Airbnb listings are in each zip code. When performing our spatial join, we notice that there are 32 Airbnb listings which fall out of the bounds of the Bay Area Zip Codes and do not get joined. Some of these may be coding errors as they are just a few feet into the ocean, while other listings are more than a mile away from the nearest zip code. To correct for this, I perform a second spatial join but this time join each of the 32 problematic listings to the closest zip code. If the distance between the closest zip and the listing is less than 100 meters (12 listings) I assign the closest zip code to the listing. And if the distance is more than 100 meters (20 listings), I drop it from this analysis.
-
 
 ```{r cleaning_data}
-#| cache = TRUE
-
-# -----  Join data ---------
-
-# Join zip code data to ACS zcta level data. zcta = roughly zipcode for almost all cases
-zip_code_demographic_data = zip_codes %>% 
-  select(zip, po_name, state) %>% 
-  # 1 zip code is in zip_codes but not in ACS data. Upon further inspection,
-  # this is a zip code in Mountain View close to the water and not in our 
-  # analysis area (ie there are no airbnb listings in this zip). So we drop this 
-  # one zip code with inner_join
-  tidylog::inner_join(acs_data, by = c("zip" = "zcta"))
-
+#| cache: true
+#| output: false
 
 # -----  Clean data ---------
 
@@ -253,17 +253,19 @@ outlier_dropped_listings_price_histogram
 ```
 
 
+
 ## Projections 
-I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for all our datasets as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. It is a conformal coordinate system that preserves angles and is suitable for the entirety of the Bay Area. 
+I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for all our datasets as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. This is is a projected 2D conformal coordinate system that:
+
+- preserves angles between locations
+- is accurate for distance based calculations like buffers and travel time
+- is suitable for the entirety of the Bay Area.
 
 
 ```{r projecting_data}
 #| cache = TRUE
 
 airbnb_data_projected = airbnb_data_cleaned %>% 
-  st_transform("EPSG:7131")
-  
-zip_code_demographic_data = zip_code_demographic_data %>% 
   st_transform("EPSG:7131")
 
 zip_codes = zip_codes %>% 
@@ -272,14 +274,17 @@ zip_codes = zip_codes %>%
 acs_data_raw = acs_data_raw %>% 
   st_transform("EPSG:7131")
 
+bike_rental_points = bike_rental_points %>% 
+  st_transform("EPSG:7131")
 ```
 
 
 
-## Data Cleaning
+## Data Merging
 
+We then append ZCTA information for each listing by spatially joining the point level Airbnb listings to the ZCTA polygons provided by the Census. This spatial join allows us to succesfully assign ZCTA for all but 24 of our listings. Upon visual inspection, the remaining 24 listings seem to be just outside the ZCTA boundaries. In one case, the listing was a yacht that was a few hundred meters off the coast. In order to not lose valuable information on these properties, we perform a second distance based spatial join to see if the listings are within 500 meters of any ZCTAs. With this 500 meter buffer, the 24 remaining listings were also assigned a ZCTA. 
 
-```{r perform_spatial_join}
+```{r append_zcta_info_to_listings}
 #| cache = TRUE
 
 # ----- Append ZCTA information to listings -------
@@ -319,7 +324,20 @@ airbnb_data_corrected = airbnb_data_joined %>%
   filter(!is.na(zcta)) %>% 
   bind_rows(problematic_listings_matched_zctas)
 
+```
 
+Finally, the ZCTA level ACS data that `library(tidycensus)` produces is for the entirety of the US. But will be making ZCTA level maps of the Bay Area and therefore need to crop our data. We crop the ZCTA level ACS data to a study area bounding box, which was created by:
+
+1) Calculating which ZCTAs our Airbnb listings fall into
+2) Generating a bounding box around those ZCTAs
+3) Expanding those bounding boxes by 1-5% to add context on surrounding ZCTAs and make the region more square for easier visualization
+
+This gives us a rectangular region, which contains all the relevant ZCTAs with Airbmb listings and a few other ZCTAs to help provide context on surrounding neighborhoods and be used as a basemap layer. 
+
+
+
+```{r define_study_area_bbox}
+#| cache: true
 
 # ---- Define Study Area -------
 
@@ -350,11 +368,32 @@ acs_data_cropped = acs_data_raw %>%
 # ---- Define final datasets -----
 airbnb_points = airbnb_data_corrected
 acs_zcta_polygons = acs_data_cropped
+
+
+
 ```
 
-### Map 1.1: Airbnb Listings per Zipcode
+## Mapping/Data Viz
+
+First we map the count (Map 1.1) and average price (Map 2.2) of Airbnb listings in Bay Area Zip Codes. Since we have already performed a spatial join to append the ZCTA information for each listing, we simply have to count the total number of listings to obtain the total count, and perform a grouped calculation by ZCTA to obtain the average price of listings. I made several design decisions for maps 1.1 and 1.2 which are justified below:
+
+1) I decide to bin our continuous data into intervals because the ranges of our count and price variables are relatively large and we want to avoid having too many colors as we might have with a continuous color ramp. And for now, we just want to see
+I also use manually created equal interval bins in order to make the bins human readable and give a reader an honest view of the data.
+
+2) I use the readymade Green-Blue color palette from [ColorBrewer](https://colorbrewer2.org/#type=sequential&scheme=GnBu&n=6), based on Cynthia Brewer's research [-@harrower2003colorbrewer] on gradients that are colorblind friendly, and suitable for LCD computer screens.
+
+3) I include the number of zip codes that fall in each bin in the form of a histogram to the right of the legend. This is an effective way to give the reader the actual distribution of the variable and give  context on what may seem like arbitrary bin cutoff decisions. This also helps alleviate the problem of having areally large ZCTAs with low/high values bias the reader into thinking those high/low values are more common than they actually are. 
+
+4) I choose to include the surrounding ZCTA boundaries as a basemap layer and do not actually map their values (which in this case would be 0 becuase there are no Airbmbs in these surrounding ZCTAs). I intentionally do not list these light gray ZCTAs in the legend as I do not want the reader to focus on these neighborhoods. They are there simpply to frame the outline of the Bay Area and perhaps serve as helpful geographic context for readers familiar with the Bay Area.
+
+5) Finally we also provide interactive maps using `library(mapview)` for exploratory purposes. 
 
 
+### Map 1.1: Count of Airbnb listings
+
+::: {.panel-tabset}
+
+#### Static 
 ```{r listings_by_zipcode_map}
 #| fig-width: 7
 #| fig-height: 7
@@ -379,8 +418,7 @@ airbnb_count_by_zcta = airbnb_count_by_zcta %>%
     n >=225 & n <300 ~ "225 - 300",
     n >=300 & n <375 ~ "300 - 375",
     n >=375 & n <450 ~ "375 - 450",
-    n >=450 & n <525 ~ "450 - 525",
-    n >=525 ~ "525 +"
+    n >=450 ~ "450 +"
   ),
   count_buckets =
     as_factor(count_buckets) %>%
@@ -390,8 +428,7 @@ airbnb_count_by_zcta = airbnb_count_by_zcta %>%
                   "225 - 300",
                   "300 - 375",
                   "375 - 450",
-                  "450 - 525",
-                  "525 +"
+                  "450 +"
                   ))
   )
 
@@ -413,7 +450,7 @@ listing_bucket_counts = airbnb_count_by_zcta %>%
   st_drop_geometry() %>% 
   count(count_buckets, .drop = FALSE) %>% 
   mutate(text = case_when(
-    count_buckets == "525 +"  ~ paste0(n, " Zips"),
+    count_buckets == "450 +"  ~ paste0(n, " Zips"),
     TRUE ~ as.character(n)
    ))
 
@@ -426,7 +463,7 @@ num_listings_histogram_legend = listing_bucket_counts %>%
   scale_y_discrete(expand = expansion(mult = c(0.1, 0.11))) +
   scale_fill_brewer(na.value = "grey90",
                        palette = "GnBu",
-                       direction = -11,
+                       direction = 1,
                     drop = FALSE) +
   geom_text(aes(label = text),
             hjust = -0.1,
@@ -439,13 +476,16 @@ num_listings_histogram_legend = listing_bucket_counts %>%
                              byrow = TRUE)) +
   theme(
         legend.title = element_blank(),
-        legend.key.height = unit(0.233, "in"),
+        legend.key.height = unit(0.275, "in"),
         legend.key.width = unit(0.05, "in"),
+#         legend.key.height = unit(0.233, "in"),
+#         legend.key.width = unit(0.05, "in"),
         legend.position = "left",
         legend.spacing.y = unit(0.015, "in"),
         legend.margin = margin(0,0,0,0),
         text = element_text(family = "Lato"),
-        plot.title= element_text(face = "bold", size = 13),
+        plot.title= element_text(face = "bold.italic", 
+                                 size = 13),
         # axis.line.y = element_line(),
         # axis.text.y = element_text(),
         # axis.text.x = element_text(),
@@ -455,10 +495,7 @@ num_listings_histogram_legend = listing_bucket_counts %>%
        x = "Count of Zip Codes")
 
 
-
 # ----- Create choropleth map ----------
-
-
 # Make map
 airbnb_listings_by_zips_plot = airbnb_count_by_zcta %>% 
   ggplot(aes(fill = count_buckets)) + 
@@ -492,8 +529,26 @@ airbnb_listings_by_zips_plot +
 
 ```
 
+Most ZCTAs have 0-75 listings. The ZCTAs with the highest count of listings are concentrated in downtown San Francisco, right next to the Bay in West Oakland. And the least amount of Airbnbs tend to be in far east Oakland and the Southwest Bay Area. This makes intuitive sense as these locations are relatively far from common tourist destinations in San Francisco and Oakland. 
+
+#### Interactive
+```{r}
+mapviewOptions(basemaps = "CartoDB.Positron")
+mapview(airbnb_count_by_zcta, 
+        zcol = "count_buckets", 
+        layer = "Count of Listings",
+        col.regions=brewer.pal(7, "GnBu"))
+```
+
+
+:::
+
 
 ### Map 1.2: Average Airbnb Prices in Bay Area Zipcodes
+
+::: {.panel-tabset}
+
+#### Static
 
 ```{r listing_avg_price_by_zip_map}
 #| fig-width: 7
@@ -586,7 +641,8 @@ avg_price_histogram_legend = avg_price_bucket_counts %>%
         legend.spacing.y = unit(0.015, "in"),
         legend.margin = margin(0,0,0,0),
         text = element_text(family = "Lato"),
-        plot.title= element_text(face = "bold", size = 13),
+        plot.title= element_text(face = "bold.italic",
+                                 size = 13),
         # axis.line.y = element_line(),
         # axis.text.y = element_text(),
         # axis.text.x = element_text(),
@@ -630,9 +686,31 @@ airbnb_avg_price_by_zips_plot +
 
 ```
 
-For the demographic Census variables, I choose to look at housing costs (median rent per bedroom) and education levels (percentage of adults with at least a bachelor's degree). 
+Most Airbnbs tend to be between \$150 - \$300 a night. The highest priced Airbnbs tend to be along the Pacific Ocean coast, and along the coastline of San Francisco. This could be because these Airbnbs have great views, or access to beaches/other tourist friendly amenities. Conversely, the lowest priced Airbnbs tend to be Oakland. 
 
-### Map 2.1: Median Rent in Bay Area by ZCTA
+#### Interactive
+```{r}
+
+mapview(airbnb_avg_price_by_zcta, 
+        zcol = "avg_price_buckets", 
+        layer = "Avg Listing Price",
+        col.regions=brewer.pal(7, "GnBu"))
+```
+
+:::
+
+We next map our two Census variables at ZCTA level to see how they vary in our study area. Our maps are very similar to the previous maps except with a few different design decisions:
+
+1) I now use a continuous color ramp instead of a binned color ramp. I do this because now we are interested in looking at small differences in the Census variables across ZCTAs, which continuous color ramps can do effectively.
+
+2) I also include a color matched density plot (estimated using Kernel Density Estimation) to the right side of the legend. This is essentially a smoothed version of a histogram and allows the reader to get a sense of the distribution of the continuous variable. We choose to omit the axis for the density plot as actual density values can be hard to interpret (they are just curves whose area integrates to 1) and we really just want the reader to focus on the overall distribution of the variables and see that middle values are a lot more likely than extreme values. 
+
+
+### Map 2.1: Median Rent by ZCTA
+
+::: {.panel-tabset}
+
+#### Static
 
 ```{r median_rent_map}
 #| fig-width: 6
@@ -647,18 +725,13 @@ acs_zcta_polygons = acs_zcta_polygons %>%
   ))
 
 
-
-# acs_zcta_polygons_study_area_adjusted %>% mapview(zcol)
-# 
-# acs_zcta_polygons %>% filter(is.na(median_rent_e)) %>% mapview()
-
 # ----- Create raw median rent sf ggplot -------
 median_rent_map = acs_zcta_polygons %>% 
   filter(in_study_area) %>% 
   ggplot(aes(fill = median_rent_e)) +
   geom_sf(color = "white", 
           size = 0.1) +
-  scale_fill_viridis_c(
+  scale_fill_distiller(
                     labels = scales::dollar_format(),
                     direction = 1,
                     na.value = "grey70",
@@ -667,24 +740,27 @@ median_rent_map = acs_zcta_polygons %>%
                       label.position = "left",
                       barheight = 14.5,
                       order =1
-                      )
-                    ) +
-    # Hacky solution to force ggplot to include NA in legend scale, create 
-    # blank color aesthetic for a tiny zcta, and then override aesthetics in 
-    # guide to match NA colro values
-    geom_sf(data= acs_zcta_polygons %>%
-            filter(zcta == 94517),
-            size = 0.1,
-          aes(color = "NA")) +
-    scale_color_manual(values = NA) +
-    guides(colour=guide_legend("", 
-                               override.aes=list(colour="grey70", fill = "grey70"),
-                               label.position = "left",
-                               order =2)) +
-    geom_sf(data = acs_zcta_polygons %>% 
-            filter(!in_study_area),
-          fill = "grey90",
-          color = "white") +
+                      ),
+                    palette = "GnBu"
+
+
+  ) +
+  # Hacky solution to force ggplot to include NA in legend scale, create 
+  # blank color aesthetic for a tiny zcta, and then override aesthetics in 
+  # guide to match NA colro values
+  geom_sf(data= acs_zcta_polygons %>%
+          filter(zcta == 94517),
+          size = 0.1,
+        aes(color = "NA")) +
+  scale_color_manual(values = NA) +
+  guides(colour=guide_legend("", 
+                             override.aes=list(colour="grey70", fill = "grey70"),
+                             label.position = "left",
+                             order =2)) +
+  geom_sf(data = acs_zcta_polygons %>% 
+          filter(!in_study_area),
+        fill = "grey90",
+        color = "white") +
   labs(fill = "Median Rent") +
   # scale_fill_steps(high = "magenta", low = "blue", na.value = "grey90") +
   theme_void()  +
@@ -728,10 +804,16 @@ median_rent_density_line = median_rent_density_df %>%
                 fontface = "bold.italic",
                 alpha = 0.6
                 )+
-  scale_color_viridis_c(
+  scale_color_distiller(
                   direction = 1,
-                  na.value = "grey90"
-                  ) +
+                  na.value = "grey90",
+                  palette = "GnBu"
+  ) +
+  # scale_color_viridis_c(
+  #                 # labels = scales::percent_format(),
+  #                 direction = 1,
+  #                 na.value = "grey90"
+  #                 ) +
   scale_x_continuous(expand = expansion(mult = c(0.065, 0.23))) +
   coord_flip() +
   theme_void() +
@@ -768,8 +850,29 @@ median_rent_map +
 
 ```
 
+The ZCTAs with the highest rent tend to be in downtown San Fransisco and Southeast San Mateo. The ZCTAs with the lowest rent tend to be in Southeast San Francisco, and all throughout Oakland. The density plot shows us that most ZCTAs have average rents between \$1500 and \$2500 per bedroom.
 
-### Map 2.2: Percentage of 25+ population with Bachelors Degree or Higher in Bay Area
+#### Interactive
+```{r}
+acs_zcta_polygons %>% 
+  filter(in_study_area) %>% 
+  mapview(zcol = "median_rent_e",
+          layer = "Median Rent",
+          col.regions=brewer.pal(7, "GnBu"),
+          na.color = "grey40") +
+  mapview(acs_zcta_polygons %>% filter(!in_study_area),
+          col.regions = "grey80",
+          legend = FALSE)
+  
+```
+
+:::
+
+### Map 2.2: Percentage of 25+ population with Bachelors Degree or Higher
+
+::: {.panel-tabset}
+
+#### Static
 ```{r pct_bach_map}
 #| fig-width: 6
 #| fig-height: 7.25
@@ -782,8 +885,9 @@ bach_degree_map = acs_zcta_polygons %>%
   ggplot(aes(fill = pct_bach_higher_e)) +
   geom_sf(color = "white", 
           size = 0.1) +
-  scale_fill_viridis_c(
+  scale_fill_distiller(
                     labels = scales::percent_format(),
+                    limits = c(0,1),
                     direction = 1,
                     na.value = "grey70",
                     guide = guide_colorbar(
@@ -791,20 +895,12 @@ bach_degree_map = acs_zcta_polygons %>%
                       label.position = "left",
                       barheight = 14.5,
                       order =1
-                      )
-                    ) +
-    # Don't need this hack to get NA in legend bc there are no NA values for this 
-    # ACS variable
-    # geom_sf(data= acs_zcta_polygons %>% 
-    #         filter(zcta == 94517),
-    #         size = 0.1,
-    #       aes(color = "NA")) +
-    # scale_color_manual(values = NA) +
-    # guides(colour=guide_legend("", 
-    #                            override.aes=list(colour="grey70", fill = "grey70"),
-    #                            label.position = "left",
-    #                            order =2)) +
-    geom_sf(data = acs_zcta_polygons %>% 
+                      ),
+                    palette = "GnBu"
+                    
+    
+  ) +
+  geom_sf(data = acs_zcta_polygons %>% 
             filter(!in_study_area),
           fill = "grey90",
           color = "white") +
@@ -841,7 +937,8 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
              y = density,
              color = pct_bach_higher_e,
              )) +
-  geom_line(lwd = 1.5, alpha = 0.8) +
+  geom_line(lwd = 1.5, 
+            alpha = 0.8) +
   geom_textpath(label = "Density",
                 size = 4, 
                 text_only = TRUE,
@@ -851,13 +948,20 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
                 fontface = "bold.italic",
                 alpha = 0.6
                 )+
-  scale_color_viridis_c(
-                  # labels = scales::percent_format(),
-                  direction = 1,
-                  na.value = "grey90"
-                  ) +
+    scale_color_distiller(
+                    direction = 1,
+                    na.value = "grey90",
+                    palette = "GnBu"
+    ) +
+  # scale_color_viridis_c(
+  #                 # labels = scales::percent_format(),
+  #                 direction = 1,
+  #                 na.value = "grey90"
+  #                 ) +
   # Fiddled with these numbers until the density plot aligned with legend
-  scale_x_continuous(expand = expansion(mult = c(0.11, 0.19))) +
+  scale_x_continuous(expand = expansion(mult = c(0.09, 0.19))) +
+  scale_y_continuous(expand = expansion(mult = c(0.18, 0.1))) +
+  # scale_x_continuous(expand = expansion(mult = c(0.11, 0.19))) +
   coord_flip() +
   theme_void() +
   guides(color = "none") +
@@ -874,15 +978,15 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
 # ----- Paste everything together with library(patchwork) -------
 
 design <- "
-111111111111111111444
-111111111111111111444
-111111111111111111233
-111111111111111111233
-111111111111111111233
-111111111111111111233
-111111111111111111233
-111111111111111111555
-111111111111111111555
+11111111111111111444
+11111111111111111444
+11111111111111111233
+11111111111111111233
+11111111111111111233
+11111111111111111233
+11111111111111111233
+11111111111111111555
+11111111111111111555
 "    
 bach_degree_map +
   guide_area() + 
@@ -895,7 +999,97 @@ bach_degree_map +
 
 ```
 
+The most highly educated ZCTAs tend to be in East Oakland, West San Francisco, and South San Mateo. The least educated ZCTAs tend to be in South Oakland, and South San Francisco. Generally these maps  track the median rent map in that highly educated ZCTAs tend to have high rents and vice versa. In fact these two Census variables have a correlation  of `r cor(acs_zcta_polygons %>% filter(in_study_area) %>% pull(pct_bach_higher_e), acs_zcta_polygons %>% filter(in_study_area) %>% pull(median_rent_e), use = "complete.obs") %>% round(2)`. 
+
+#### Interactive
+```{r}
+acs_zcta_polygons %>% 
+  filter(in_study_area) %>% 
+  mapview(zcol = "pct_bach_higher_e",
+          layer = "% Bachelors </br> or higher",
+          col.regions=brewer.pal(7, "GnBu"),
+          na.color = "grey40") +
+  mapview(acs_zcta_polygons %>% filter(!in_study_area),
+          col.regions = "grey80",
+          legend = FALSE)
+  
+```
+
+:::
+
+The main types of neighborhoods that we've identified in Map 2.1 and 2.2 are high housing costs and highly educated neighborhoods, which tend to be in downtown San Francisco and South San Mateo. I'll call these tech worker hubs, because these are neighborhoods close to where the headquarters of many Silicon Valley companies are located. And it makes sense that high income and highly educated tech workers would drive up rental prices here. Similarly there are less college educated and lower housing cost neighborhoods in South San Francisco and most of Oakland. This is generally where the lower-income, and often Black and brown residents of the Bay tend to live. 
+
+If I had to use this classification to evaluate where Airbnbs would cluster, my hypothesis would be that they would cluster near these tech worker hubs (as many workers may actually use Airbnb for short term housing) and near downtown San Francisco with high rental prices (as these locations are close to many tourist attractions and probably considered safe neighborhoods).
+
+### Map 3: <span style="color:#EF8A17">Log Price</span> of Airbnb listings and <span style="color:#2171b5">Median Rent</span>
+
+
+```{r}
+
+ggplot() +
+  geom_sf(data = acs_zcta_polygons %>% filter(!in_study_area),
+          color = "white",
+          fill = "grey90"
+          ) +
+  geom_sf(data = acs_zcta_polygons %>% filter(in_study_area),
+          aes(fill = median_rent_e),
+          color = "white",
+          alpha = 0.65
+          ) +
+  scale_fill_distiller(na.value = "grey40",
+                       palette = "Blues",
+                       direction = 1,
+                       labels = scales::dollar_format()) +
+  geom_sf(data = airbnb_data_corrected, 
+          color = "#EF8A17",
+          stroke = FALSE,
+          alpha = 0.02) +
+  guides(fill = guide_colorbar(title = "Median Rent",
+                               label.position = "left",
+                               draw.ulim = TRUE,
+                               draw.llim = TRUE,
+                               title.vjust = 4,
+                               override.aes = list(alpha = 0.2))) +
+  theme_void() +
+  theme(text = element_text(family = "Lato"),
+        legend.title = element_text(face = "bold.italic"))
+```
+
+
+Map 3 shows all the airbnb listing locations (orange points) overlaid on top of a chorpoleth map of Median rent. I have set increased transparency of the Median Rent choropleth map and increased transparency of the Airbnb point listings so that we can easily see how the listings line up with Median rent and reduce visual clutter. Generally we see that listings are generally concentrated around (but not necessarily in) neighborhoods with high median rent particularly in San Francisco.
+
 # Analysis Methods Explained
+
+A heatmap of OSM sourced Bike rental locations are provided below
+
+### Map 4: Bike Rental Locations from OSM
+
+```{r}
+
+
+# ---- Crop bike rental data to study area -----
+bike_rental_points = bike_rental_points %>% 
+  st_intersection(acs_zcta_polygons) 
+
+bike_rental_points_joined = bike_rental_points %>% 
+  select(zcta, in_study_area, osm_id, name, addr.city, amenity, bicycle_rental, brand, capacity, shop, num_listings, avg_price) 
+
+
+bike_rental_points_joined %>% 
+  filter(in_study_area) %>% 
+  ggplot() +
+  geom_sf(data = acs_zcta_polygons %>% filter(!in_study_area), 
+          color = "grey90", 
+          fill = "transparent") +
+  geom_sf(data = acs_zcta_polygons %>% filter(in_study_area), 
+          color = "black", 
+          fill = "transparent") +
+  geom_sf(color = "forestgreen", alpha = 0.19, stroke = FALSE) +
+  theme_void()
+
+
+```
+
 
 # Spatial Analysis
 
