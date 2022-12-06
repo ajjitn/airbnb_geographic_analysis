@@ -164,9 +164,13 @@ div.csl-indent {
   <li><a href="#map-3-log-price-of-airbnb-listings-and-median-rent" id="toc-map-3-log-price-of-airbnb-listings-and-median-rent" class="nav-link" data-scroll-target="#map-3-log-price-of-airbnb-listings-and-median-rent">Map 3: <span style="color:#EF8A17">Log Price</span> of Airbnb listings and <span style="color:#2171b5">Median Rent</span></a></li>
   </ul></li>
   </ul></li>
+  <li><a href="#part-2" id="toc-part-2" class="nav-link" data-scroll-target="#part-2">Part 2:</a>
+  <ul class="collapse">
+  <li><a href="#potential-raster-datasets" id="toc-potential-raster-datasets" class="nav-link" data-scroll-target="#potential-raster-datasets">Potential Raster Datasets</a></li>
   <li><a href="#analysis-methods-explained" id="toc-analysis-methods-explained" class="nav-link" data-scroll-target="#analysis-methods-explained">Analysis Methods Explained</a>
   <ul class="collapse">
-  <li><a href="#map-4-bike-rental-locations-from-osm" id="toc-map-4-bike-rental-locations-from-osm" class="nav-link" data-scroll-target="#map-4-bike-rental-locations-from-osm">Map 4: Bike Rental Locations from OSM</a></li>
+  <li><a href="#map-4-bike-rental-locations-from-open-street-map" id="toc-map-4-bike-rental-locations-from-open-street-map" class="nav-link" data-scroll-target="#map-4-bike-rental-locations-from-open-street-map">Map 4: <span style="color:#CA1551">Bike Rental</span> locations from Open Street Map</a></li>
+  </ul></li>
   </ul></li>
   <li><a href="#spatial-analysis" id="toc-spatial-analysis" class="nav-link" data-scroll-target="#spatial-analysis">Spatial Analysis</a></li>
   <li><a href="#conclusion" id="toc-conclusion" class="nav-link" data-scroll-target="#conclusion">Conclusion</a></li>
@@ -1133,47 +1137,42 @@ div.csl-indent {
 <span id="cb13-73"><a href="#cb13-73" aria-hidden="true" tabindex="-1"></a>                    <span class="at">na.value =</span> <span class="st">"grey90"</span>,</span>
 <span id="cb13-74"><a href="#cb13-74" aria-hidden="true" tabindex="-1"></a>                    <span class="at">palette =</span> <span class="st">"GnBu"</span></span>
 <span id="cb13-75"><a href="#cb13-75" aria-hidden="true" tabindex="-1"></a>    ) <span class="sc">+</span></span>
-<span id="cb13-76"><a href="#cb13-76" aria-hidden="true" tabindex="-1"></a>  <span class="co"># scale_color_viridis_c(</span></span>
-<span id="cb13-77"><a href="#cb13-77" aria-hidden="true" tabindex="-1"></a>  <span class="co">#                 # labels = scales::percent_format(),</span></span>
-<span id="cb13-78"><a href="#cb13-78" aria-hidden="true" tabindex="-1"></a>  <span class="co">#                 direction = 1,</span></span>
-<span id="cb13-79"><a href="#cb13-79" aria-hidden="true" tabindex="-1"></a>  <span class="co">#                 na.value = "grey90"</span></span>
-<span id="cb13-80"><a href="#cb13-80" aria-hidden="true" tabindex="-1"></a>  <span class="co">#                 ) +</span></span>
-<span id="cb13-81"><a href="#cb13-81" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Fiddled with these numbers until the density plot aligned with legend</span></span>
-<span id="cb13-82"><a href="#cb13-82" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_x_continuous</span>(<span class="at">expand =</span> <span class="fu">expansion</span>(<span class="at">mult =</span> <span class="fu">c</span>(<span class="fl">0.09</span>, <span class="fl">0.19</span>))) <span class="sc">+</span></span>
-<span id="cb13-83"><a href="#cb13-83" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_y_continuous</span>(<span class="at">expand =</span> <span class="fu">expansion</span>(<span class="at">mult =</span> <span class="fu">c</span>(<span class="fl">0.18</span>, <span class="fl">0.1</span>))) <span class="sc">+</span></span>
-<span id="cb13-84"><a href="#cb13-84" aria-hidden="true" tabindex="-1"></a>  <span class="co"># scale_x_continuous(expand = expansion(mult = c(0.11, 0.19))) +</span></span>
-<span id="cb13-85"><a href="#cb13-85" aria-hidden="true" tabindex="-1"></a>  <span class="fu">coord_flip</span>() <span class="sc">+</span></span>
-<span id="cb13-86"><a href="#cb13-86" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>() <span class="sc">+</span></span>
-<span id="cb13-87"><a href="#cb13-87" aria-hidden="true" tabindex="-1"></a>  <span class="fu">guides</span>(<span class="at">color =</span> <span class="st">"none"</span>) <span class="sc">+</span></span>
-<span id="cb13-88"><a href="#cb13-88" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
-<span id="cb13-89"><a href="#cb13-89" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.margin =</span> <span class="fu">unit</span>(<span class="fu">c</span>(<span class="dv">0</span>,<span class="dv">0</span>,<span class="dv">0</span>,<span class="dv">0</span>), <span class="st">"inches"</span>),</span>
-<span id="cb13-90"><a href="#cb13-90" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.title =</span> <span class="fu">element_blank</span>(),</span>
-<span id="cb13-91"><a href="#cb13-91" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.text =</span> <span class="fu">element_blank</span>(),</span>
-<span id="cb13-92"><a href="#cb13-92" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_blank</span>(), </span>
-<span id="cb13-93"><a href="#cb13-93" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.line =</span> <span class="fu">element_blank</span>(),</span>
-<span id="cb13-94"><a href="#cb13-94" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks.length =</span>  <span class="fu">unit</span>(<span class="dv">0</span>, <span class="st">"pt"</span>)</span>
-<span id="cb13-95"><a href="#cb13-95" aria-hidden="true" tabindex="-1"></a>  )</span>
-<span id="cb13-96"><a href="#cb13-96" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-97"><a href="#cb13-97" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-98"><a href="#cb13-98" aria-hidden="true" tabindex="-1"></a><span class="co"># ----- Paste everything together with library(patchwork) -------</span></span>
-<span id="cb13-99"><a href="#cb13-99" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb13-100"><a href="#cb13-100" aria-hidden="true" tabindex="-1"></a>design <span class="ot">&lt;-</span> <span class="st">"</span></span>
-<span id="cb13-101"><a href="#cb13-101" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111444</span></span>
-<span id="cb13-102"><a href="#cb13-102" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111444</span></span>
-<span id="cb13-103"><a href="#cb13-103" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
-<span id="cb13-104"><a href="#cb13-104" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
-<span id="cb13-105"><a href="#cb13-105" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
-<span id="cb13-106"><a href="#cb13-106" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
-<span id="cb13-107"><a href="#cb13-107" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
-<span id="cb13-108"><a href="#cb13-108" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111555</span></span>
-<span id="cb13-109"><a href="#cb13-109" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111555</span></span>
-<span id="cb13-110"><a href="#cb13-110" aria-hidden="true" tabindex="-1"></a><span class="st">"</span>    </span>
-<span id="cb13-111"><a href="#cb13-111" aria-hidden="true" tabindex="-1"></a>bach_degree_map <span class="sc">+</span></span>
-<span id="cb13-112"><a href="#cb13-112" aria-hidden="true" tabindex="-1"></a>  <span class="fu">guide_area</span>() <span class="sc">+</span> </span>
-<span id="cb13-113"><a href="#cb13-113" aria-hidden="true" tabindex="-1"></a>  pct_bach_higher_density_line <span class="sc">+</span> </span>
-<span id="cb13-114"><a href="#cb13-114" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot_spacer</span>() <span class="sc">+</span></span>
-<span id="cb13-115"><a href="#cb13-115" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot_spacer</span>() <span class="sc">+</span></span>
-<span id="cb13-116"><a href="#cb13-116" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot_layout</span>(<span class="at">design=</span>design, <span class="at">guides =</span> <span class="st">"collect"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb13-76"><a href="#cb13-76" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Fiddled with these numbers until the density plot aligned with legend</span></span>
+<span id="cb13-77"><a href="#cb13-77" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_x_continuous</span>(<span class="at">expand =</span> <span class="fu">expansion</span>(<span class="at">mult =</span> <span class="fu">c</span>(<span class="fl">0.09</span>, <span class="fl">0.19</span>))) <span class="sc">+</span></span>
+<span id="cb13-78"><a href="#cb13-78" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_y_continuous</span>(<span class="at">expand =</span> <span class="fu">expansion</span>(<span class="at">mult =</span> <span class="fu">c</span>(<span class="fl">0.18</span>, <span class="fl">0.1</span>))) <span class="sc">+</span></span>
+<span id="cb13-79"><a href="#cb13-79" aria-hidden="true" tabindex="-1"></a>  <span class="co"># scale_x_continuous(expand = expansion(mult = c(0.11, 0.19))) +</span></span>
+<span id="cb13-80"><a href="#cb13-80" aria-hidden="true" tabindex="-1"></a>  <span class="fu">coord_flip</span>() <span class="sc">+</span></span>
+<span id="cb13-81"><a href="#cb13-81" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>() <span class="sc">+</span></span>
+<span id="cb13-82"><a href="#cb13-82" aria-hidden="true" tabindex="-1"></a>  <span class="fu">guides</span>(<span class="at">color =</span> <span class="st">"none"</span>) <span class="sc">+</span></span>
+<span id="cb13-83"><a href="#cb13-83" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(</span>
+<span id="cb13-84"><a href="#cb13-84" aria-hidden="true" tabindex="-1"></a>    <span class="at">plot.margin =</span> <span class="fu">unit</span>(<span class="fu">c</span>(<span class="dv">0</span>,<span class="dv">0</span>,<span class="dv">0</span>,<span class="dv">0</span>), <span class="st">"inches"</span>),</span>
+<span id="cb13-85"><a href="#cb13-85" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.title =</span> <span class="fu">element_blank</span>(),</span>
+<span id="cb13-86"><a href="#cb13-86" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.text =</span> <span class="fu">element_blank</span>(),</span>
+<span id="cb13-87"><a href="#cb13-87" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks =</span> <span class="fu">element_blank</span>(), </span>
+<span id="cb13-88"><a href="#cb13-88" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.line =</span> <span class="fu">element_blank</span>(),</span>
+<span id="cb13-89"><a href="#cb13-89" aria-hidden="true" tabindex="-1"></a>    <span class="at">axis.ticks.length =</span>  <span class="fu">unit</span>(<span class="dv">0</span>, <span class="st">"pt"</span>)</span>
+<span id="cb13-90"><a href="#cb13-90" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb13-91"><a href="#cb13-91" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-92"><a href="#cb13-92" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-93"><a href="#cb13-93" aria-hidden="true" tabindex="-1"></a><span class="co"># ----- Paste everything together with library(patchwork) -------</span></span>
+<span id="cb13-94"><a href="#cb13-94" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-95"><a href="#cb13-95" aria-hidden="true" tabindex="-1"></a>design <span class="ot">&lt;-</span> <span class="st">"</span></span>
+<span id="cb13-96"><a href="#cb13-96" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111444</span></span>
+<span id="cb13-97"><a href="#cb13-97" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111444</span></span>
+<span id="cb13-98"><a href="#cb13-98" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
+<span id="cb13-99"><a href="#cb13-99" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
+<span id="cb13-100"><a href="#cb13-100" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
+<span id="cb13-101"><a href="#cb13-101" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
+<span id="cb13-102"><a href="#cb13-102" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111233</span></span>
+<span id="cb13-103"><a href="#cb13-103" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111555</span></span>
+<span id="cb13-104"><a href="#cb13-104" aria-hidden="true" tabindex="-1"></a><span class="st">11111111111111111555</span></span>
+<span id="cb13-105"><a href="#cb13-105" aria-hidden="true" tabindex="-1"></a><span class="st">"</span>    </span>
+<span id="cb13-106"><a href="#cb13-106" aria-hidden="true" tabindex="-1"></a>bach_degree_map <span class="sc">+</span></span>
+<span id="cb13-107"><a href="#cb13-107" aria-hidden="true" tabindex="-1"></a>  <span class="fu">guide_area</span>() <span class="sc">+</span> </span>
+<span id="cb13-108"><a href="#cb13-108" aria-hidden="true" tabindex="-1"></a>  pct_bach_higher_density_line <span class="sc">+</span> </span>
+<span id="cb13-109"><a href="#cb13-109" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot_spacer</span>() <span class="sc">+</span></span>
+<span id="cb13-110"><a href="#cb13-110" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot_spacer</span>() <span class="sc">+</span></span>
+<span id="cb13-111"><a href="#cb13-111" aria-hidden="true" tabindex="-1"></a>  <span class="fu">plot_layout</span>(<span class="at">design=</span>design, <span class="at">guides =</span> <span class="st">"collect"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 <div class="cell-output-display">
 <p><img src="GY476_50797_files/figure-html/pct_bach_map-1.png" class="img-fluid" width="576"></p>
@@ -1212,74 +1211,146 @@ div.csl-indent {
 <div class="cell">
 <details>
 <summary>Show the code</summary>
-<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>() <span class="sc">+</span></span>
-<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="sc">!</span>in_study_area),</span>
-<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"white"</span>,</span>
-<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>          <span class="at">fill =</span> <span class="st">"grey90"</span></span>
-<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>          ) <span class="sc">+</span></span>
-<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(in_study_area),</span>
-<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a>          <span class="fu">aes</span>(<span class="at">fill =</span> median_rent_e),</span>
-<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"white"</span>,</span>
-<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.65</span></span>
-<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>          ) <span class="sc">+</span></span>
-<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_fill_distiller</span>(<span class="at">na.value =</span> <span class="st">"grey40"</span>,</span>
-<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>                       <span class="at">palette =</span> <span class="st">"Blues"</span>,</span>
-<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a>                       <span class="at">direction =</span> <span class="dv">1</span>,</span>
-<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a>                       <span class="at">labels =</span> scales<span class="sc">::</span><span class="fu">dollar_format</span>()) <span class="sc">+</span></span>
-<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> airbnb_data_corrected, </span>
-<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"#EF8A17"</span>,</span>
-<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a>          <span class="at">stroke =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.02</span>) <span class="sc">+</span></span>
-<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">guides</span>(<span class="at">fill =</span> <span class="fu">guide_colorbar</span>(<span class="at">title =</span> <span class="st">"Median Rent"</span>,</span>
-<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a>                               <span class="at">label.position =</span> <span class="st">"left"</span>,</span>
-<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a>                               <span class="at">draw.ulim =</span> <span class="cn">TRUE</span>,</span>
-<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a>                               <span class="at">draw.llim =</span> <span class="cn">TRUE</span>,</span>
-<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a>                               <span class="at">title.vjust =</span> <span class="dv">4</span>,</span>
-<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a>                               <span class="at">override.aes =</span> <span class="fu">list</span>(<span class="at">alpha =</span> <span class="fl">0.2</span>))) <span class="sc">+</span></span>
-<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>() <span class="sc">+</span></span>
-<span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">text =</span> <span class="fu">element_text</span>(<span class="at">family =</span> <span class="st">"Lato"</span>),</span>
-<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a>        <span class="at">legend.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">"bold.italic"</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># For the 4 listings with price = 0, change to price = 1 so log is defined</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>airbnb_data_log_corrected <span class="ot">=</span> airbnb_data_corrected <span class="sc">%&gt;%</span> </span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">mutate</span>(<span class="at">price =</span> <span class="fu">case_when</span>(</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>    price <span class="sc">==</span> <span class="dv">0</span> <span class="sc">~</span> <span class="dv">1</span>,</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>    <span class="cn">TRUE</span> <span class="sc">~</span> price</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>  ))</span>
+<span id="cb15-7"><a href="#cb15-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb15-8"><a href="#cb15-8" aria-hidden="true" tabindex="-1"></a><span class="co"># Make point plot + polygon plot of ln price vs median rent</span></span>
+<span id="cb15-9"><a href="#cb15-9" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>() <span class="sc">+</span></span>
+<span id="cb15-10"><a href="#cb15-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="sc">!</span>in_study_area),</span>
+<span id="cb15-11"><a href="#cb15-11" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"white"</span>,</span>
+<span id="cb15-12"><a href="#cb15-12" aria-hidden="true" tabindex="-1"></a>          <span class="at">fill =</span> <span class="st">"grey90"</span></span>
+<span id="cb15-13"><a href="#cb15-13" aria-hidden="true" tabindex="-1"></a>          ) <span class="sc">+</span></span>
+<span id="cb15-14"><a href="#cb15-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(in_study_area),</span>
+<span id="cb15-15"><a href="#cb15-15" aria-hidden="true" tabindex="-1"></a>          <span class="fu">aes</span>(<span class="at">fill =</span> median_rent_e),</span>
+<span id="cb15-16"><a href="#cb15-16" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"white"</span>,</span>
+<span id="cb15-17"><a href="#cb15-17" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.65</span></span>
+<span id="cb15-18"><a href="#cb15-18" aria-hidden="true" tabindex="-1"></a>          ) <span class="sc">+</span></span>
+<span id="cb15-19"><a href="#cb15-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_fill_distiller</span>(<span class="at">na.value =</span> <span class="st">"grey40"</span>,</span>
+<span id="cb15-20"><a href="#cb15-20" aria-hidden="true" tabindex="-1"></a>                       <span class="at">palette =</span> <span class="st">"Blues"</span>,</span>
+<span id="cb15-21"><a href="#cb15-21" aria-hidden="true" tabindex="-1"></a>                       <span class="at">direction =</span> <span class="dv">1</span>,</span>
+<span id="cb15-22"><a href="#cb15-22" aria-hidden="true" tabindex="-1"></a>                       <span class="at">labels =</span> scales<span class="sc">::</span><span class="fu">dollar_format</span>()) <span class="sc">+</span></span>
+<span id="cb15-23"><a href="#cb15-23" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> airbnb_data_log_corrected, </span>
+<span id="cb15-24"><a href="#cb15-24" aria-hidden="true" tabindex="-1"></a>          <span class="fu">aes</span>(<span class="at">color =</span> <span class="fu">log</span>(price)),</span>
+<span id="cb15-25"><a href="#cb15-25" aria-hidden="true" tabindex="-1"></a>          <span class="co"># color = "#EF8A17",</span></span>
+<span id="cb15-26"><a href="#cb15-26" aria-hidden="true" tabindex="-1"></a>          <span class="at">stroke =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb15-27"><a href="#cb15-27" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.9</span>,</span>
+<span id="cb15-28"><a href="#cb15-28" aria-hidden="true" tabindex="-1"></a>          <span class="at">size =</span> <span class="fl">0.4</span>) <span class="sc">+</span></span>
+<span id="cb15-29"><a href="#cb15-29" aria-hidden="true" tabindex="-1"></a>  <span class="fu">scale_color_distiller</span>(<span class="at">na.value =</span> <span class="st">"grey40"</span>,</span>
+<span id="cb15-30"><a href="#cb15-30" aria-hidden="true" tabindex="-1"></a>                       <span class="at">palette =</span> <span class="st">"Oranges"</span>,</span>
+<span id="cb15-31"><a href="#cb15-31" aria-hidden="true" tabindex="-1"></a>                       <span class="at">direction =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb15-32"><a href="#cb15-32" aria-hidden="true" tabindex="-1"></a>  <span class="fu">guides</span>(<span class="at">fill =</span> <span class="fu">guide_colorbar</span>(<span class="at">title =</span> <span class="st">"Median Rent"</span>,</span>
+<span id="cb15-33"><a href="#cb15-33" aria-hidden="true" tabindex="-1"></a>                               <span class="at">label.position =</span> <span class="st">"left"</span>,</span>
+<span id="cb15-34"><a href="#cb15-34" aria-hidden="true" tabindex="-1"></a>                               <span class="at">draw.ulim =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb15-35"><a href="#cb15-35" aria-hidden="true" tabindex="-1"></a>                               <span class="at">draw.llim =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb15-36"><a href="#cb15-36" aria-hidden="true" tabindex="-1"></a>                               <span class="at">title.vjust =</span> <span class="dv">4</span>,</span>
+<span id="cb15-37"><a href="#cb15-37" aria-hidden="true" tabindex="-1"></a>                               <span class="at">override.aes =</span> <span class="fu">list</span>(<span class="at">alpha =</span> <span class="fl">0.2</span>)),</span>
+<span id="cb15-38"><a href="#cb15-38" aria-hidden="true" tabindex="-1"></a>         <span class="at">color =</span> <span class="fu">guide_colorbar</span>(<span class="at">title =</span> <span class="st">"Ln(Price)"</span>,</span>
+<span id="cb15-39"><a href="#cb15-39" aria-hidden="true" tabindex="-1"></a>                               <span class="at">label.position =</span> <span class="st">"left"</span>,</span>
+<span id="cb15-40"><a href="#cb15-40" aria-hidden="true" tabindex="-1"></a>                               <span class="at">draw.ulim =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb15-41"><a href="#cb15-41" aria-hidden="true" tabindex="-1"></a>                               <span class="at">draw.llim =</span> <span class="cn">TRUE</span>,</span>
+<span id="cb15-42"><a href="#cb15-42" aria-hidden="true" tabindex="-1"></a>                               <span class="at">title.vjust =</span> <span class="dv">1</span>,</span>
+<span id="cb15-43"><a href="#cb15-43" aria-hidden="true" tabindex="-1"></a>                               <span class="at">override.aes =</span> <span class="fu">list</span>(<span class="at">alpha =</span> <span class="fl">0.2</span>))</span>
+<span id="cb15-44"><a href="#cb15-44" aria-hidden="true" tabindex="-1"></a>         ) <span class="sc">+</span></span>
+<span id="cb15-45"><a href="#cb15-45" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>() <span class="sc">+</span></span>
+<span id="cb15-46"><a href="#cb15-46" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">text =</span> <span class="fu">element_text</span>(<span class="at">family =</span> <span class="st">"Lato"</span>),</span>
+<span id="cb15-47"><a href="#cb15-47" aria-hidden="true" tabindex="-1"></a>        <span class="at">legend.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">"bold.italic"</span>),</span>
+<span id="cb15-48"><a href="#cb15-48" aria-hidden="true" tabindex="-1"></a>        <span class="at">legend.spacing.y =</span> <span class="fu">unit</span>(<span class="fl">0.1</span>, <span class="st">"in"</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 <div class="cell-output-display">
 <p><img src="GY476_50797_files/figure-html/unnamed-chunk-5-1.png" class="img-fluid" width="672"></p>
 </div>
+<details>
+<summary>Show the code</summary>
+<div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Calculate listing level and zcta level correlations between price and median rent </span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>listing_level_correlation_price_rent <span class="ot">=</span> airbnb_data_log_corrected <span class="sc">%&gt;%</span> </span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="co"># this is price of listing, and median rent of zcta that listing is in</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(price, </span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>         median_rent_e) <span class="sc">%&gt;%</span> </span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_drop_geometry</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>  {<span class="fu">cor</span>(.<span class="sc">$</span>price, .<span class="sc">$</span>median_rent_e, <span class="at">use =</span> <span class="st">"complete.obs"</span>)} <span class="sc">%&gt;%</span> </span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a>  <span class="fu">round</span>(<span class="dv">2</span>)</span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>zcta_level_correlation_price_rent <span class="ot">=</span> airbnb_avg_price_by_zcta <span class="sc">%&gt;%</span> </span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>  <span class="co"># this is avg price of listing in zcta, and median rent of zcta</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(avg_price, </span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a>         zcta) <span class="sc">%&gt;%</span> </span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_drop_geometry</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">left_join</span>(acs_zcta_polygons <span class="sc">%&gt;%</span> </span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a>              <span class="fu">st_drop_geometry</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a>              <span class="fu">select</span>(zcta, median_rent_e), </span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a>            <span class="at">by =</span> <span class="st">"zcta"</span>) <span class="sc">%&gt;%</span> </span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a>  {<span class="fu">cor</span>(.<span class="sc">$</span>avg_price, .<span class="sc">$</span>median_rent_e, <span class="at">use =</span> <span class="st">"complete.obs"</span>)} <span class="sc">%&gt;%</span> </span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a>  <span class="fu">round</span>(<span class="dv">2</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</details>
 </div>
-<p>Map 3 shows all the airbnb listing locations (orange points) overlaid on top of a chorpoleth map of Median rent. I have set increased transparency of the Median Rent choropleth map and increased transparency of the Airbnb point listings so that we can easily see how the listings line up with Median rent and reduce visual clutter. Generally we see that listings are generally concentrated around (but not necessarily in) neighborhoods with high median rent particularly in San Francisco.</p>
+<p>Map 3 shows the log price of Airbnb listings (orange points) overlaid on top of a chorpoleth map of Median rent. Darker orange points are more expensive listings, and darker blue neighborhoods are higher median rent neighborhoods. I have made a couple of decisions in presenting the data that are justified below:</p>
+<ol type="1">
+<li><p>I have set increased transparency of the Median Rent choropleth map so that we can reduce visual clutter and more easily see how the listings line up with Median rent.</p></li>
+<li><p>I have turned the map title into a legend by making use of colors. This helps prime the reader for the two different variables that they will be seeing on the map. I still include two actual continuous color ramp legends to represent the scales that the colors can go to.</p></li>
+<li><p>There are 4 listings which have a list price of $0 a night. I manually increment these values to be $1 a night so that when we take <code>log(price)</code>, the result will be well defined and not be -infinity.</p></li>
+</ol>
+<p>Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoodsm which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be more scarce. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is 0.24 and therefore backs up our understanding of a weakly positive relationship between median ZCTA rent and Airbnb price.</p>
 </section>
 </section>
 </section>
-<section id="analysis-methods-explained" class="level1">
-<h1>Analysis Methods Explained</h1>
+<section id="part-2" class="level1">
+<h1>Part 2:</h1>
+<section id="potential-raster-datasets" class="level2">
+<h2 class="anchored" data-anchor-id="potential-raster-datasets">Potential Raster Datasets</h2>
+<p>Some potential raster datasets we could use to improve to this analysis would be:</p>
+<ol type="1">
+<li><p>Air quality data that measures particulate matter or ozone at various grid sizes, like <a href="https://ww2.arb.ca.gov/geographical-information-system-gis-library">these data</a> from the California Air Resources Board. We could overlay this on top of our airbnb data to see if more expensive listings are correlated with being in good air quality areas, or see if good air quality is associated with more Airbnb listings.</p></li>
+<li><p>Vegetation data/indexes, that measure tree canopy cover and greenspaces at various grid sizes, like <a href="https://gis.data.ca.gov/datasets/CDFW::naip-2020-ndvi-california/about">this raster data</a> from the California Department of Fish and Wildlife that provides NVDI imagery at 60 cm resolution. We could use this to look at relationships between the amount of Airbnbs/Airbnb prices and the amount of greenspace and vegetation available in the neighborhood and surrounding neighborhoods.</p></li>
+</ol>
+</section>
+<section id="analysis-methods-explained" class="level2">
+<h2 class="anchored" data-anchor-id="analysis-methods-explained">Analysis Methods Explained</h2>
 <p>A heatmap of OSM sourced Bike rental locations are provided below</p>
-<section id="map-4-bike-rental-locations-from-osm" class="level3">
-<h3 class="anchored" data-anchor-id="map-4-bike-rental-locations-from-osm">Map 4: Bike Rental Locations from OSM</h3>
+<section id="map-4-bike-rental-locations-from-open-street-map" class="level3">
+<h3 class="anchored" data-anchor-id="map-4-bike-rental-locations-from-open-street-map">Map 4: <span style="color:#CA1551">Bike Rental</span> locations from Open Street Map</h3>
 <div class="cell">
 <details>
 <summary>Show the code</summary>
-<div class="sourceCode cell-code" id="cb16"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ---- Crop bike rental data to study area -----</span></span>
-<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a>bike_rental_points <span class="ot">=</span> bike_rental_points <span class="sc">%&gt;%</span> </span>
-<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_intersection</span>(acs_zcta_polygons) </span>
-<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a>bike_rental_points_joined <span class="ot">=</span> bike_rental_points <span class="sc">%&gt;%</span> </span>
-<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(zcta, in_study_area, osm_id, name, addr.city, amenity, bicycle_rental, brand, capacity, shop, num_listings, avg_price) </span>
-<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a>bike_rental_points_joined <span class="sc">%&gt;%</span> </span>
-<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(in_study_area) <span class="sc">%&gt;%</span> </span>
-<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">ggplot</span>() <span class="sc">+</span></span>
-<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="sc">!</span>in_study_area), </span>
-<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"grey90"</span>, </span>
-<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a>          <span class="at">fill =</span> <span class="st">"transparent"</span>) <span class="sc">+</span></span>
-<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(in_study_area), </span>
-<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"black"</span>, </span>
-<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a>          <span class="at">fill =</span> <span class="st">"transparent"</span>) <span class="sc">+</span></span>
-<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">color =</span> <span class="st">"forestgreen"</span>, <span class="at">alpha =</span> <span class="fl">0.19</span>, <span class="at">stroke =</span> <span class="cn">FALSE</span>) <span class="sc">+</span></span>
-<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ---- Crop bike rental data to study area -----</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>bike_rental_points <span class="ot">=</span> bike_rental_points <span class="sc">%&gt;%</span> </span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_intersection</span>(acs_zcta_polygons) </span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>bike_rental_points_joined <span class="ot">=</span> bike_rental_points <span class="sc">%&gt;%</span> </span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>  <span class="fu">select</span>(zcta, in_study_area, osm_id, name, addr.city, amenity, bicycle_rental, brand, capacity, shop, num_listings, avg_price) </span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Make heatmap of Bike rental stations</span></span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="fu">ggplot</span>() <span class="sc">+</span></span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(<span class="sc">!</span>in_study_area),</span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"white"</span>,</span>
+<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a>          <span class="at">fill =</span> <span class="st">"grey90"</span></span>
+<span id="cb17-15"><a href="#cb17-15" aria-hidden="true" tabindex="-1"></a>          ) <span class="sc">+</span></span>
+<span id="cb17-16"><a href="#cb17-16" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> acs_zcta_polygons <span class="sc">%&gt;%</span> <span class="fu">filter</span>(in_study_area),</span>
+<span id="cb17-17"><a href="#cb17-17" aria-hidden="true" tabindex="-1"></a>          <span class="at">fill =</span> <span class="st">"grey60"</span>,</span>
+<span id="cb17-18"><a href="#cb17-18" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"white"</span>,</span>
+<span id="cb17-19"><a href="#cb17-19" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.65</span></span>
+<span id="cb17-20"><a href="#cb17-20" aria-hidden="true" tabindex="-1"></a>          ) <span class="sc">+</span></span>
+<span id="cb17-21"><a href="#cb17-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> bike_rental_points_joined <span class="sc">%&gt;%</span> <span class="fu">filter</span>(in_study_area), </span>
+<span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"#CA1551"</span>,</span>
+<span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a>          <span class="at">stroke =</span> <span class="cn">FALSE</span>,</span>
+<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.7</span>,</span>
+<span id="cb17-26"><a href="#cb17-26" aria-hidden="true" tabindex="-1"></a>          <span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
+<span id="cb17-27"><a href="#cb17-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 <div class="cell-output-display">
 <p><img src="GY476_50797_files/figure-html/unnamed-chunk-6-1.png" class="img-fluid" width="672"></p>
 </div>
 </div>
+<div class="cell">
+
+</div>
+</section>
 </section>
 </section>
 <section id="spatial-analysis" class="level1">
@@ -1296,14 +1367,14 @@ div.csl-indent {
 <div class="cell" data-hash="GY476_50797_cache/html/unnamed-chunk-7_12677602cc302300290e258f073ec961">
 <details>
 <summary>Show the code</summary>
-<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># zip_codes_cropped = zip_codes %&gt;% </span></span>
-<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
-<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
-<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="co"># acs_data_raw_cropped = acs_data_raw %&gt;% </span></span>
-<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_transform("EPSG:7131") %&gt;% </span></span>
-<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
-<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
-<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="co"># mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># zip_codes_cropped = zip_codes %&gt;% </span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="co"># acs_data_raw_cropped = acs_data_raw %&gt;% </span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_transform("EPSG:7131") %&gt;% </span></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a><span class="co"># mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 </div>
 

@@ -17,11 +17,13 @@ bibliography: references.bib
 
 ---
 
+
 # Introduction
 
 # Data Collection 
 
 ## 1.1 Collecting and importing the data
+
 
 ```{r libraries}
 library(tidyverse)
@@ -184,6 +186,7 @@ bike_rental_points = bike_rental_locations_osm$osm_points %>%
 ```
 
 
+
 # Data Discussion 
 
 ## Dataset Overview
@@ -203,6 +206,7 @@ ZCTAs are generalized representations of zip codes, and in most cases are very s
 ## Data Cleaning
 
 For the Airbnb data, we convert the `price` column from a character vector into a numeric vector by removing commas, and `$` signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection see that most of these listing don't have any reviews and may not be real, justifying our decision.
+
 
 
 ```{r cleaning_data}
@@ -254,12 +258,14 @@ outlier_dropped_listings_price_histogram
 
 
 
+
 ## Projections 
 I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for all our datasets as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. This is is a projected 2D conformal coordinate system that:
 
 - preserves angles between locations
 - is accurate for distance based calculations like buffers and travel time
 - is suitable for the entirety of the Bay Area.
+
 
 
 ```{r projecting_data}
@@ -280,9 +286,11 @@ bike_rental_points = bike_rental_points %>%
 
 
 
+
 ## Data Merging
 
 We then append ZCTA information for each listing by spatially joining the point level Airbnb listings to the ZCTA polygons provided by the Census. This spatial join allows us to succesfully assign ZCTA for all but 24 of our listings. Upon visual inspection, the remaining 24 listings seem to be just outside the ZCTA boundaries. In one case, the listing was a yacht that was a few hundred meters off the coast. In order to not lose valuable information on these properties, we perform a second distance based spatial join to see if the listings are within 500 meters of any ZCTAs. With this 500 meter buffer, the 24 remaining listings were also assigned a ZCTA. 
+
 
 ```{r append_zcta_info_to_listings}
 #| cache = TRUE
@@ -326,6 +334,7 @@ airbnb_data_corrected = airbnb_data_joined %>%
 
 ```
 
+
 Finally, the ZCTA level ACS data that `library(tidycensus)` produces is for the entirety of the US. But will be making ZCTA level maps of the Bay Area and therefore need to crop our data. We crop the ZCTA level ACS data to a study area bounding box, which was created by:
 
 1) Calculating which ZCTAs our Airbnb listings fall into
@@ -333,6 +342,7 @@ Finally, the ZCTA level ACS data that `library(tidycensus)` produces is for the 
 3) Expanding those bounding boxes by 1-5% to add context on surrounding ZCTAs and make the region more square for easier visualization
 
 This gives us a rectangular region, which contains all the relevant ZCTAs with Airbmb listings and a few other ZCTAs to help provide context on surrounding neighborhoods and be used as a basemap layer. 
+
 
 
 
@@ -373,6 +383,7 @@ acs_zcta_polygons = acs_data_cropped
 
 ```
 
+
 ## Mapping/Data Viz
 
 First we map the count (Map 1.1) and average price (Map 2.2) of Airbnb listings in Bay Area Zip Codes. Since we have already performed a spatial join to append the ZCTA information for each listing, we simply have to count the total number of listings to obtain the total count, and perform a grouped calculation by ZCTA to obtain the average price of listings. I made several design decisions for maps 1.1 and 1.2 which are justified below:
@@ -394,6 +405,7 @@ I also use manually created equal interval bins in order to make the bins human 
 ::: {.panel-tabset}
 
 #### Static 
+
 ```{r listings_by_zipcode_map}
 #| fig-width: 7
 #| fig-height: 7
@@ -529,9 +541,11 @@ airbnb_listings_by_zips_plot +
 
 ```
 
+
 Most ZCTAs have 0-75 listings. The ZCTAs with the highest count of listings are concentrated in downtown San Francisco, right next to the Bay in West Oakland. And the least amount of Airbnbs tend to be in far east Oakland and the Southwest Bay Area. This makes intuitive sense as these locations are relatively far from common tourist destinations in San Francisco and Oakland. 
 
 #### Interactive
+
 ```{r}
 mapviewOptions(basemaps = "CartoDB.Positron")
 mapview(airbnb_count_by_zcta, 
@@ -539,6 +553,7 @@ mapview(airbnb_count_by_zcta,
         layer = "Count of Listings",
         col.regions=brewer.pal(7, "GnBu"))
 ```
+
 
 
 :::
@@ -549,6 +564,7 @@ mapview(airbnb_count_by_zcta,
 ::: {.panel-tabset}
 
 #### Static
+
 
 ```{r listing_avg_price_by_zip_map}
 #| fig-width: 7
@@ -686,9 +702,11 @@ airbnb_avg_price_by_zips_plot +
 
 ```
 
+
 Most Airbnbs tend to be between \$150 - \$300 a night. The highest priced Airbnbs tend to be along the Pacific Ocean coast, and along the coastline of San Francisco. This could be because these Airbnbs have great views, or access to beaches/other tourist friendly amenities. Conversely, the lowest priced Airbnbs tend to be Oakland. 
 
 #### Interactive
+
 ```{r}
 
 mapview(airbnb_avg_price_by_zcta, 
@@ -696,6 +714,7 @@ mapview(airbnb_avg_price_by_zcta,
         layer = "Avg Listing Price",
         col.regions=brewer.pal(7, "GnBu"))
 ```
+
 
 :::
 
@@ -711,6 +730,7 @@ We next map our two Census variables at ZCTA level to see how they vary in our s
 ::: {.panel-tabset}
 
 #### Static
+
 
 ```{r median_rent_map}
 #| fig-width: 6
@@ -850,9 +870,11 @@ median_rent_map +
 
 ```
 
+
 The ZCTAs with the highest rent tend to be in downtown San Fransisco and Southeast San Mateo. The ZCTAs with the lowest rent tend to be in Southeast San Francisco, and all throughout Oakland. The density plot shows us that most ZCTAs have average rents between \$1500 and \$2500 per bedroom.
 
 #### Interactive
+
 ```{r}
 acs_zcta_polygons %>% 
   filter(in_study_area) %>% 
@@ -866,6 +888,7 @@ acs_zcta_polygons %>%
   
 ```
 
+
 :::
 
 ### Map 2.2: Percentage of 25+ population with Bachelors Degree or Higher
@@ -873,6 +896,7 @@ acs_zcta_polygons %>%
 ::: {.panel-tabset}
 
 #### Static
+
 ```{r pct_bach_map}
 #| fig-width: 6
 #| fig-height: 7.25
@@ -994,9 +1018,11 @@ bach_degree_map +
 
 ```
 
+
 The most highly educated ZCTAs tend to be in East Oakland, West San Francisco, and South San Mateo. The least educated ZCTAs tend to be in South Oakland, and South San Francisco. Generally these maps  track the median rent map in that highly educated ZCTAs tend to have high rents and vice versa. In fact these two Census variables have a correlation  of `r cor(acs_zcta_polygons %>% filter(in_study_area) %>% pull(pct_bach_higher_e), acs_zcta_polygons %>% filter(in_study_area) %>% pull(median_rent_e), use = "complete.obs") %>% round(2)`. 
 
 #### Interactive
+
 ```{r}
 acs_zcta_polygons %>% 
   filter(in_study_area) %>% 
@@ -1010,6 +1036,7 @@ acs_zcta_polygons %>%
   
 ```
 
+
 :::
 
 The main types of neighborhoods that we've identified in Map 2.1 and 2.2 are high housing costs and highly educated neighborhoods, which tend to be in downtown San Francisco and South San Mateo. I'll call these tech worker hubs, because these are neighborhoods close to where the headquarters of many Silicon Valley companies are located. And it makes sense that high income and highly educated tech workers would drive up rental prices here. Similarly there are less college educated and lower housing cost neighborhoods in South San Francisco and most of Oakland. This is generally where the lower-income, and often Black and brown residents of the Bay tend to live. 
@@ -1017,6 +1044,7 @@ The main types of neighborhoods that we've identified in Map 2.1 and 2.2 are hig
 If I had to use this classification to evaluate where Airbnbs would cluster, my hypothesis would be that they would cluster near these tech worker hubs (as many workers may actually use Airbnb for short term housing) and near downtown San Francisco with high rental prices (as these locations are close to many tourist attractions and probably considered safe neighborhoods).
 
 ### Map 3: <span style="color:#EF8A17">Log Price</span> of Airbnb listings and <span style="color:#2171b5">Median Rent</span>
+
 
 
 ```{r}
@@ -1100,6 +1128,7 @@ zcta_level_correlation_price_rent = airbnb_avg_price_by_zcta %>%
 ```
 
 
+
 Map 3 shows the log price of Airbnb listings (orange points) overlaid on top of a chorpoleth map of Median rent. Darker orange points are more expensive listings, and darker blue neighborhoods are higher median rent neighborhoods. I have made a couple of decisions in presenting the data that are justified below:
 
 1) I have set increased transparency of the Median Rent choropleth map so that we can reduce visual clutter and more easily see how the listings line up with Median rent. 
@@ -1125,6 +1154,7 @@ A heatmap of OSM sourced Bike rental locations are provided below
 
 
 ### Map 4: <span style="color:#CA1551">Bike Rental</span> locations from Open Street Map
+
 
 ```{r}
 
@@ -1159,10 +1189,10 @@ ggplot() +
 
 ```
 
-
 ```{r creating_buffers}
 
 ```
+
 
 # Spatial Analysis
 
@@ -1174,6 +1204,7 @@ ggplot() +
 ## Appendix A: Relationship between Zip Code and ZCTA boundraies
 
 The below interactive shows the zip code (left side) and ZCTA (right side) boundaries are slightly different. ZCTA are
+
 
 ```{r}
 #| cache = TRUE
@@ -1189,5 +1220,4 @@ The below interactive shows the zip code (left side) and ZCTA (right side) bound
 # mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")
 
 ```
-
 
