@@ -953,11 +953,6 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
                     na.value = "grey90",
                     palette = "GnBu"
     ) +
-  # scale_color_viridis_c(
-  #                 # labels = scales::percent_format(),
-  #                 direction = 1,
-  #                 na.value = "grey90"
-  #                 ) +
   # Fiddled with these numbers until the density plot aligned with legend
   scale_x_continuous(expand = expansion(mult = c(0.09, 0.19))) +
   scale_y_continuous(expand = expansion(mult = c(0.18, 0.1))) +
@@ -1026,6 +1021,14 @@ If I had to use this classification to evaluate where Airbnbs would cluster, my 
 
 ```{r}
 
+# For the 4 listings with price = 0, change to price = 1 so log is defined
+airbnb_data_log_corrected = airbnb_data_corrected %>% 
+  mutate(price = case_when(
+    price == 0 ~ 1,
+    TRUE ~ price
+  ))
+
+# Make point plot + polygon plot of ln price vs median rent
 ggplot() +
   geom_sf(data = acs_zcta_polygons %>% filter(!in_study_area),
           color = "white",
@@ -1040,26 +1043,82 @@ ggplot() +
                        palette = "Blues",
                        direction = 1,
                        labels = scales::dollar_format()) +
-  geom_sf(data = airbnb_data_corrected, 
-          color = "#EF8A17",
+  geom_sf(data = airbnb_data_log_corrected, 
+          aes(color = log(price)),
+          # color = "#EF8A17",
           stroke = FALSE,
-          alpha = 0.02) +
+          alpha = 0.9,
+          size = 0.4) +
+  scale_color_distiller(na.value = "grey40",
+                       palette = "Oranges",
+                       direction = 1) +
   guides(fill = guide_colorbar(title = "Median Rent",
                                label.position = "left",
                                draw.ulim = TRUE,
                                draw.llim = TRUE,
                                title.vjust = 4,
-                               override.aes = list(alpha = 0.2))) +
+                               override.aes = list(alpha = 0.2)),
+         color = guide_colorbar(title = "Ln(Price)",
+                               label.position = "left",
+                               draw.ulim = TRUE,
+                               draw.llim = TRUE,
+                               title.vjust = 1,
+                               override.aes = list(alpha = 0.2))
+         ) +
   theme_void() +
   theme(text = element_text(family = "Lato"),
         legend.title = element_text(face = "bold.italic"))
+
+
+
+# Calculate listing level and zcta level correlations between price and median rent 
+listing_level_correlation_price_rent = airbnb_data_log_corrected %>% 
+  # this is price of listing, and median rent of zcta that listing is in
+  select(price, 
+         median_rent_e) %>% 
+  st_drop_geometry() %>% 
+  {cor(.$price, .$median_rent_e, use = "complete.obs")} %>% 
+  round(2)
+
+zcta_level_correlation_price_rent = airbnb_avg_price_by_zcta %>% 
+  # this is avg price of listing in zcta, and median rent of zcta
+  select(avg_price, 
+         zcta) %>% 
+  st_drop_geometry() %>% 
+  left_join(acs_zcta_polygons %>% 
+              st_drop_geometry() %>% 
+              select(zcta, median_rent_e), 
+            by = "zcta") %>% 
+  {cor(.$avg_price, .$median_rent_e, use = "complete.obs")} %>% 
+  round(2)
+
+
 ```
 
 
-Map 3 shows all the airbnb listing locations (orange points) overlaid on top of a chorpoleth map of Median rent. I have set increased transparency of the Median Rent choropleth map and increased transparency of the Airbnb point listings so that we can easily see how the listings line up with Median rent and reduce visual clutter. Generally we see that listings are generally concentrated around (but not necessarily in) neighborhoods with high median rent particularly in San Francisco.
+Map 3 shows the log price of Airbnb listings (orange points) overlaid on top of a chorpoleth map of Median rent. Darker orange points are more expensive listings, and darker blue neighborhoods are higher median rent neighborhoods. I have made a couple of decisions in presenting the data that are justified below:
+
+1) I have set increased transparency of the Median Rent choropleth map so that we can reduce visual clutter and more easily see how the listings line up with Median rent. 
+
+3) I have turned the map title into a legend by making use of colors. This helps prime the reader for the two different variables that they will be seeing on the map. I still include two actual continuous color ramp legends to represent the scales that the colors can go to. 
+
+2) There are 4 listings which have a list price of \$0 a night. I manually increment these values to be \$1 a night so that when we take  `log(price)`, the result will be well defined and not be -infinity. 
+
+Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoodsm which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be more scarce. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our understanding of a weakly positive relationship between median ZCTA rent and Airbnb price.  
+
+
+# Part 2: 
+
+## Potential Raster Datasets
+Some potential raster datasets we could use to improve to this analysis would be:
+
+1) Air quality data that measures particulate matter or ozone at various grid sizes, like [this data](https://ww2.arb.ca.gov/geographical-information-system-gis-library) from the California Air Resources Board. We could overlay this on top of our airbnb data to see if more expensive listings are correlated with being in high air quality areas. 
+
+2) Vegetation data/indexes, that measure tree canopy and greenspaces at various grid sizes, like [this raster dataset](https://gis.data.ca.gov/datasets/CDFW::naip-2020-ndvi-california/about) from the California Department of Fish and Wildlife with 60 cm resolution NDVI imagery. We could use this to look at relationships between Airbnb prices and the amount of greenspace and vegetation of neighborhoods. 
+
+3) 
 
 # Analysis Methods Explained
-
 A heatmap of OSM sourced Bike rental locations are provided below
 
 ### Map 4: Bike Rental Locations from OSM
@@ -1073,6 +1132,28 @@ bike_rental_points = bike_rental_points %>%
 
 bike_rental_points_joined = bike_rental_points %>% 
   select(zcta, in_study_area, osm_id, name, addr.city, amenity, bicycle_rental, brand, capacity, shop, num_listings, avg_price) 
+
+
+
+# Make heatmap of Bike rental stations
+ggplot() +
+  geom_sf(data = acs_zcta_polygons %>% filter(!in_study_area),
+          color = "white",
+          fill = "grey90"
+          ) +
+  geom_sf(data = acs_zcta_polygons %>% filter(in_study_area),
+          fill = "grey60",
+          color = "white",
+          alpha = 0.65
+          ) +
+
+  geom_sf(data = bike_rental_points_joined, 
+          color = "#EF8A17",
+          stroke = FALSE,
+          alpha = 0.7,
+          size = 1) +
+  theme_void()
+
 
 
 bike_rental_points_joined %>% 
