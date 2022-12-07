@@ -170,6 +170,7 @@ div.csl-indent {
   <li><a href="#analysis-methods-explained" id="toc-analysis-methods-explained" class="nav-link" data-scroll-target="#analysis-methods-explained">Analysis Methods Explained</a>
   <ul class="collapse">
   <li><a href="#map-4-bike-rental-locations-from-open-street-map" id="toc-map-4-bike-rental-locations-from-open-street-map" class="nav-link" data-scroll-target="#map-4-bike-rental-locations-from-open-street-map">Map 4: <span style="color:#CA1551">Bike Rental</span> locations from Open Street Map</a></li>
+  <li><a href="#creating-buffers-around-bike-share-stations" id="toc-creating-buffers-around-bike-share-stations" class="nav-link" data-scroll-target="#creating-buffers-around-bike-share-stations">Creating buffers around bike share stations</a></li>
   </ul></li>
   </ul></li>
   <li><a href="#spatial-analysis" id="toc-spatial-analysis" class="nav-link" data-scroll-target="#spatial-analysis">Spatial Analysis</a></li>
@@ -232,7 +233,7 @@ div.csl-indent {
 <span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a><span class="co"># acs_vars = load_variables(year = 2020, dataset = "acs5")</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 </div>
-<div class="cell" data-hash="GY476_50797_cache/html/data_read_in_35bf8016a21f426a184382859e5e0e98">
+<div class="cell" data-hash="GY476_50797_cache/html/data_read_in_b3d40c5f60d2be39fea2aaaef2fb9ae8">
 <details>
 <summary>Show the code</summary>
 <div class="sourceCode cell-code" id="cb2"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="co">#----- Read in data ------------</span></span>
@@ -354,7 +355,7 @@ div.csl-indent {
 <span id="cb2-117"><a href="#cb2-117" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb2-118"><a href="#cb2-118" aria-hidden="true" tabindex="-1"></a><span class="co"># --- OSM Data</span></span>
 <span id="cb2-119"><a href="#cb2-119" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb2-120"><a href="#cb2-120" aria-hidden="true" tabindex="-1"></a><span class="co"># build a query</span></span>
+<span id="cb2-120"><a href="#cb2-120" aria-hidden="true" tabindex="-1"></a><span class="co"># build an overpass query</span></span>
 <span id="cb2-121"><a href="#cb2-121" aria-hidden="true" tabindex="-1"></a>query <span class="ot">&lt;-</span> <span class="fu">opq</span>(<span class="at">bbox =</span> <span class="st">"San Francisco Bay Area"</span>) <span class="sc">|&gt;</span> </span>
 <span id="cb2-122"><a href="#cb2-122" aria-hidden="true" tabindex="-1"></a>  <span class="fu">add_osm_feature</span>(<span class="at">key =</span> <span class="st">"amenity"</span>, <span class="at">value =</span> <span class="st">"bicycle_rental"</span>)</span>
 <span id="cb2-123"><a href="#cb2-123" aria-hidden="true" tabindex="-1"></a></span>
@@ -372,19 +373,17 @@ div.csl-indent {
 <section id="dataset-overview" class="level2">
 <h2 class="anchored" data-anchor-id="dataset-overview">Dataset Overview</h2>
 <p>I make use of 4 datasets in this project:</p>
-<ol type="1">
-<li><p>Airbnb data: This is a periodically published snapshot of Airbnb listings in various global cities produced by Murray Cox on his website <a href="http://insideairbnb.com/">Inside Airbnb</a>. We programmatically download the zipped csv files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the 13415 total listings.</p></li>
-<li><p>ACS Demographic Data: Using <code>library(tidycensus)</code> we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Specifically we look at the Median Rent per bedroom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor’s degree was calculated from Census Table B23006. And in line with Census recommendations, we use the number of adults over the age of 25 for the denominator of this percentage.</p></li>
-</ol>
+<ul>
+<li><p>Airbnb listing data: This is a periodically published snapshot of Airbnb listings in various global cities produced by Murray Cox on his website <a href="http://insideairbnb.com/">Inside Airbnb</a>. We programmatically download the zipped csv files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the 13415 total listings.</p></li>
+<li><p>ACS Demographic Data: Using <code>library(tidycensus)</code> we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Specifically we look at the Median Rent per bedroom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor’s degree was calculated from Census Table B23006. And in line with Census recommendations, we use the number of adults over the age of 25 for the denominator of this percentage.</p>
 <p>The 5 year ACS survey contains average values from 5 years of data collection in order to provide robust and precise estimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align with the airbnb data which was scraped in 2022, but is likely still the best estimate of the demographic composition of these neighborhoods.</p>
-<p>ZCTAs are generalized representations of zip codes, and in most cases are very similar to zip codes . But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively (see Appendix A for a detailed comparison). For the sake of standardization, in this paper we will always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. And whenever I refer to “zip codes”, these will always mean Zip Code Tabulation Areas. If we had used USPS zip code level geographies (like <a href="https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q">this data</a> from Berkeley Geodata library) we would have to find a way to merge zip codes to ZCTA’s and deal with zip codes that fall into multiple ZCTA’s when working with ACS data.</p>
-<ol start="3" type="1">
-<li>OSM Bike Rental Location : Using the overpass API and <code>library(osmdata)</code> in R, we download OSM Amenity data on bike rental stations in the Bay Area. These are user reported point locations of where bike stations are located in Open Street Map and include both private and municipial bike rental locations.</li>
-</ol>
+<p>ZCTAs are generalized representations of zip codes, and in most cases are very similar to zip codes. But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively (see Appendix A for a detailed comparison). For the sake of standardization, in this paper we will always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. And whenever I refer to “zip codes”, these will always mean Zip Code Tabulation Areas. If we had used USPS zip code level geographies (like <a href="https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q">this data</a> from Berkeley Geodata library) we would have to find a way to merge zip codes to ZCTA’s and deal with zip codes that fall into multiple ZCTA’s when working with ACS data.</p></li>
+<li><p>OSM Bike Rental Location : Using the overpass API and <code>library(osmdata)</code> in R, we download OSM Amenity data on bike rental stations in the Bay Area. These are user reported point locations of where bike stations are located in Open Street Map and include both private and municipal bike rental locations.</p></li>
+</ul>
 </section>
 <section id="data-cleaning" class="level2">
 <h2 class="anchored" data-anchor-id="data-cleaning">Data Cleaning</h2>
-<p>For the Airbnb data, we convert the <code>price</code> column from a character vector into a numeric vector by removing commas, and <code>$</code> signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection see that most of these listing don’t have any reviews and may not be real, justifying our decision.</p>
+<p>For the Airbnb data, we convert the <code>price</code> column from a character vector into a numeric vector by removing commas, and <code>$</code> signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection we see that most of these dropped listing don’t have any reviews and may not be real, justifying our decision.</p>
 <div class="cell" data-hash="GY476_50797_cache/html/cleaning_data_b8b814cf6cb4d2048e38d08d1692b753">
 <details>
 <summary>Show the code</summary>
@@ -1258,7 +1257,10 @@ div.csl-indent {
 <span id="cb15-45"><a href="#cb15-45" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>() <span class="sc">+</span></span>
 <span id="cb15-46"><a href="#cb15-46" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme</span>(<span class="at">text =</span> <span class="fu">element_text</span>(<span class="at">family =</span> <span class="st">"Lato"</span>),</span>
 <span id="cb15-47"><a href="#cb15-47" aria-hidden="true" tabindex="-1"></a>        <span class="at">legend.title =</span> <span class="fu">element_text</span>(<span class="at">face =</span> <span class="st">"bold.italic"</span>),</span>
-<span id="cb15-48"><a href="#cb15-48" aria-hidden="true" tabindex="-1"></a>        <span class="at">legend.spacing.y =</span> <span class="fu">unit</span>(<span class="fl">0.1</span>, <span class="st">"in"</span>))</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<span id="cb15-48"><a href="#cb15-48" aria-hidden="true" tabindex="-1"></a>        <span class="co"># Have to adjust margin so that </span></span>
+<span id="cb15-49"><a href="#cb15-49" aria-hidden="true" tabindex="-1"></a>        <span class="at">legend.margin =</span> <span class="fu">margin</span>(<span class="dv">0</span>,<span class="dv">0</span>,<span class="dv">20</span>,<span class="dv">0</span>)</span>
+<span id="cb15-50"><a href="#cb15-50" aria-hidden="true" tabindex="-1"></a>        <span class="co"># legend.spacing.y = unit(0.1, "in")</span></span>
+<span id="cb15-51"><a href="#cb15-51" aria-hidden="true" tabindex="-1"></a>        )</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 <div class="cell-output-display">
 <p><img src="GY476_50797_files/figure-html/unnamed-chunk-5-1.png" class="img-fluid" width="672"></p>
@@ -1339,7 +1341,7 @@ div.csl-indent {
 <span id="cb17-22"><a href="#cb17-22" aria-hidden="true" tabindex="-1"></a>  <span class="fu">geom_sf</span>(<span class="at">data =</span> bike_rental_points_joined <span class="sc">%&gt;%</span> <span class="fu">filter</span>(in_study_area), </span>
 <span id="cb17-23"><a href="#cb17-23" aria-hidden="true" tabindex="-1"></a>          <span class="at">color =</span> <span class="st">"#CA1551"</span>,</span>
 <span id="cb17-24"><a href="#cb17-24" aria-hidden="true" tabindex="-1"></a>          <span class="at">stroke =</span> <span class="cn">FALSE</span>,</span>
-<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.7</span>,</span>
+<span id="cb17-25"><a href="#cb17-25" aria-hidden="true" tabindex="-1"></a>          <span class="at">alpha =</span> <span class="fl">0.6</span>,</span>
 <span id="cb17-26"><a href="#cb17-26" aria-hidden="true" tabindex="-1"></a>          <span class="at">size =</span> <span class="dv">1</span>) <span class="sc">+</span></span>
 <span id="cb17-27"><a href="#cb17-27" aria-hidden="true" tabindex="-1"></a>  <span class="fu">theme_void</span>()</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
@@ -1347,9 +1349,31 @@ div.csl-indent {
 <p><img src="GY476_50797_files/figure-html/unnamed-chunk-6-1.png" class="img-fluid" width="672"></p>
 </div>
 </div>
+<p>This maps shows that most bike rental locations are located in San Francisco, along with seemingly a second network in Oakland, and just a handful in San Mateo. Digging deeper into the OSM data, we see that there are a total of 550 bike rental stations in our study area. And while most of these don’t have explicit names, there are 101marked as belonging to Bay Wheels, which is the main bikeshare station serving San Francisco, San Jose and the East Bay.</p>
+</section>
+<section id="creating-buffers-around-bike-share-stations" class="level3">
+<h3 class="anchored" data-anchor-id="creating-buffers-around-bike-share-stations">Creating buffers around bike share stations</h3>
 <div class="cell">
-
+<details>
+<summary>Show the code</summary>
+<div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># ---- Create buffer around bike stations ----</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a>bike_rental_points_buffered <span class="ot">=</span> bike_rental_points_joined <span class="sc">%&gt;%</span> </span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">filter</span>(in_study_area) <span class="sc">%&gt;%</span> </span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_buffer</span>(<span class="dv">200</span>)</span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a>airbnbs_within_200m_of_bikes <span class="ot">=</span> airbnb_data_corrected <span class="sc">%&gt;%</span> </span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_intersection</span>(bike_rental_points_buffered)</span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="co"># ---- Count unique Airbnbs ------</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a>unique_airbnbs_in_buffer <span class="ot">=</span> airbnbs_within_200m_of_bikes <span class="sc">%&gt;%</span> </span>
+<span id="cb18-11"><a href="#cb18-11" aria-hidden="true" tabindex="-1"></a>  <span class="fu">st_drop_geometry</span>() <span class="sc">%&gt;%</span> </span>
+<span id="cb18-12"><a href="#cb18-12" aria-hidden="true" tabindex="-1"></a>  <span class="fu">count</span>(id, <span class="at">sort =</span> <span class="cn">TRUE</span>)</span>
+<span id="cb18-13"><a href="#cb18-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-14"><a href="#cb18-14" aria-hidden="true" tabindex="-1"></a>count_airbmbs_close_to_bikes <span class="ot">=</span> <span class="fu">nrow</span>(unique_airbnbs_in_buffer)</span>
+<span id="cb18-15"><a href="#cb18-15" aria-hidden="true" tabindex="-1"></a>count_total_airbnbs <span class="ot">=</span> <span class="fu">nrow</span>(airbnb_data_corrected)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</details>
 </div>
+<p>Next, we create 200 meter buffers around the bike share stations in our study area, and then perform a spatial join to see which Airbnbs fall within these buffer areas. Overall, 2617 unique Airbnbs (or 19.6% of Airbnbs) are within the 200 meter buffer of bike stations. For me, this would help decide where to choose an Airbnb if I was going to San Francisco as I personally love biking. But I would have doubts about the effectiveness of this strategy given that Open Street Map data can often be incomplete or out of date. So it is likely that this is not a full or accurate list of Airbnbs that currently meet our criteria.</p>
 </section>
 </section>
 </section>
@@ -1367,14 +1391,14 @@ div.csl-indent {
 <div class="cell" data-hash="GY476_50797_cache/html/unnamed-chunk-7_12677602cc302300290e258f073ec961">
 <details>
 <summary>Show the code</summary>
-<div class="sourceCode cell-code" id="cb18"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># zip_codes_cropped = zip_codes %&gt;% </span></span>
-<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
-<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
-<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="co"># acs_data_raw_cropped = acs_data_raw %&gt;% </span></span>
-<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_transform("EPSG:7131") %&gt;% </span></span>
-<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
-<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
-<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a><span class="co"># mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># zip_codes_cropped = zip_codes %&gt;% </span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a><span class="co"># acs_data_raw_cropped = acs_data_raw %&gt;% </span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_transform("EPSG:7131") %&gt;% </span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="co">#   st_crop(study_area_box)</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a><span class="co"># </span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a><span class="co"># mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
 </details>
 </div>
 

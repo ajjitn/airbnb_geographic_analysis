@@ -171,7 +171,7 @@ acs_data = acs_data_raw %>%
 
 # --- OSM Data
 
-# build a query
+# build an overpass query
 query <- opq(bbox = "San Francisco Bay Area") |> 
   add_osm_feature(key = "amenity", value = "bicycle_rental")
 
@@ -189,20 +189,20 @@ bike_rental_points = bike_rental_locations_osm$osm_points %>%
 ## Dataset Overview
 I make use of 4 datasets in this project:
 
-1) Airbnb data: This is a periodically published snapshot of Airbnb listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We programmatically download the zipped csv files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the `r nrow(airbnb_data)` total listings.
+- Airbnb listing data: This is a periodically published snapshot of Airbnb listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We programmatically download the zipped csv files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the `r nrow(airbnb_data)` total listings.
 
-2) ACS Demographic Data: Using `library(tidycensus)` we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Specifically we look at the Median Rent per bedroom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor's degree was calculated from Census Table B23006. And in line with Census recommendations, we use the number of adults over the age of 25 for the denominator of this percentage. 
+- ACS Demographic Data: Using `library(tidycensus)` we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Specifically we look at the Median Rent per bedroom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor's degree was calculated from Census Table B23006. And in line with Census recommendations, we use the number of adults over the age of 25 for the denominator of this percentage. 
 
-The 5 year ACS survey contains average values from 5 years of data collection in order to provide robust and precise estimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align with the airbnb data which was scraped in 2022, but is likely still the best estimate of the demographic composition of these neighborhoods.
+    The 5 year ACS survey contains average values from 5 years of data collection in order to provide robust and precise estimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align with the airbnb data which was scraped in 2022, but is likely still the best estimate of the demographic composition of these neighborhoods.
 
-ZCTAs are generalized representations of zip codes, and in most cases are very similar to zip codes . But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively (see Appendix A for a detailed comparison). For the sake of standardization, in this paper we will always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. And whenever I refer to "zip codes", these will always mean Zip Code Tabulation Areas. If we had used USPS zip code level geographies (like [this data](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q) from Berkeley Geodata library) we would have to find a way to merge zip codes to ZCTA's and deal with zip codes that fall into multiple ZCTA's when working with ACS data. 
+    ZCTAs are generalized representations of zip codes, and in most cases are very similar to zip codes. But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively (see Appendix A for a detailed comparison). For the sake of standardization, in this paper we will always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. And whenever I refer to "zip codes", these will always mean Zip Code Tabulation Areas. If we had used USPS zip code level geographies (like [this data](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q) from Berkeley Geodata library) we would have to find a way to merge zip codes to ZCTA's and deal with zip codes that fall into multiple ZCTA's when working with ACS data. 
 
 
-3) OSM Bike Rental Location : Using the overpass API and `library(osmdata)` in R, we download OSM Amenity data on bike rental stations in the Bay Area. These are user reported point locations of where bike stations are located in Open Street Map and include both private and municipial bike rental locations. 
+- OSM Bike Rental Location: Using the overpass API and `library(osmdata)` in R, we download OSM Amenity data on bike rental stations in the Bay Area. These are user reported point locations of where bike stations are located in Open Street Map and include both private and municipal bike rental locations.
 
 ## Data Cleaning
 
-For the Airbnb data, we convert the `price` column from a character vector into a numeric vector by removing commas, and `$` signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection see that most of these listing don't have any reviews and may not be real, justifying our decision.
+For the Airbnb data, we convert the `price` column from a character vector into a numeric vector by removing commas, and `$` signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. Upon visual inspection we see that most of these dropped listing don't have any reviews and may not be real, justifying our decision.
 
 
 ```{r cleaning_data}
@@ -334,8 +334,6 @@ Finally, the ZCTA level ACS data that `library(tidycensus)` produces is for the 
 
 This gives us a rectangular region, which contains all the relevant ZCTAs with Airbmb listings and a few other ZCTAs to help provide context on surrounding neighborhoods and be used as a basemap layer. 
 
-
-
 ```{r define_study_area_bbox}
 #| cache: true
 
@@ -397,7 +395,7 @@ I also use manually created equal interval bins in order to make the bins human 
 ```{r listings_by_zipcode_map}
 #| fig-width: 7
 #| fig-height: 7
-
+#| cache: true
 
 # ----- Count airbnb listings by zcta ----------
 airbnb_count_by_zcta = airbnb_points %>% 
@@ -533,6 +531,7 @@ Most ZCTAs have 0-75 listings. The ZCTAs with the highest count of listings are 
 
 #### Interactive
 ```{r}
+#| cache: true
 mapviewOptions(basemaps = "CartoDB.Positron")
 mapview(airbnb_count_by_zcta, 
         zcol = "count_buckets", 
@@ -553,6 +552,7 @@ mapview(airbnb_count_by_zcta,
 ```{r listing_avg_price_by_zip_map}
 #| fig-width: 7
 #| fig-height: 7
+#| cache: true
 
 # ----- Calculate avg price by zcta ----------
 
@@ -690,6 +690,7 @@ Most Airbnbs tend to be between \$150 - \$300 a night. The highest priced Airbnb
 
 #### Interactive
 ```{r}
+#| cache: true
 
 mapview(airbnb_avg_price_by_zcta, 
         zcol = "avg_price_buckets", 
@@ -715,6 +716,7 @@ We next map our two Census variables at ZCTA level to see how they vary in our s
 ```{r median_rent_map}
 #| fig-width: 6
 #| fig-height: 7.25
+#| cache: true
 
 # Create indicator for whether a zcta is in study area or not
 acs_zcta_polygons = acs_zcta_polygons %>% 
@@ -854,6 +856,8 @@ The ZCTAs with the highest rent tend to be in downtown San Fransisco and Southea
 
 #### Interactive
 ```{r}
+#| cache: true
+
 acs_zcta_polygons %>% 
   filter(in_study_area) %>% 
   mapview(zcol = "median_rent_e",
@@ -876,6 +880,7 @@ acs_zcta_polygons %>%
 ```{r pct_bach_map}
 #| fig-width: 6
 #| fig-height: 7.25
+#| cache: true
 
 
 # ----- Create raw % Bachelors sf ggplot -------
@@ -998,6 +1003,8 @@ The most highly educated ZCTAs tend to be in East Oakland, West San Francisco, a
 
 #### Interactive
 ```{r}
+#| cache: true
+
 acs_zcta_polygons %>% 
   filter(in_study_area) %>% 
   mapview(zcol = "pct_bach_higher_e",
@@ -1020,13 +1027,17 @@ If I had to use this classification to evaluate where Airbnbs would cluster, my 
 
 
 ```{r}
+#| cache: true
 
 # For the 4 listings with price = 0, change to price = 1 so log is defined
 airbnb_data_log_corrected = airbnb_data_corrected %>% 
   mutate(price = case_when(
     price == 0 ~ 1,
     TRUE ~ price
-  ))
+  ),
+  # Separate price into quartiles
+  price_ntile = ntile(price, 4)
+  )
 
 # Make point plot + polygon plot of ln price vs median rent
 ggplot() +
@@ -1047,9 +1058,9 @@ ggplot() +
           aes(color = log(price)),
           # color = "#EF8A17",
           stroke = FALSE,
-          alpha = 0.9,
-          size = 0.4) +
-  scale_color_distiller(na.value = "grey40",
+          alpha = 0.8,
+          size = 0.3) +
+  scale_color_fermenter(na.value = "grey40",
                        palette = "Oranges",
                        direction = 1) +
   guides(fill = guide_colorbar(title = "Median Rent",
@@ -1069,7 +1080,7 @@ ggplot() +
   theme(text = element_text(family = "Lato"),
         legend.title = element_text(face = "bold.italic"),
         # Have to adjust margin so that 
-        legend.margin = margin(0,0,0.5,0)
+        legend.margin = margin(0,0,20,0)
         # legend.spacing.y = unit(0.1, "in")
         )
 
@@ -1108,7 +1119,7 @@ Map 3 shows the log price of Airbnb listings (orange points) overlaid on top of 
 
 2) There are 4 listings which have a list price of \$0 a night. I manually increment these values to be \$1 a night so that when we take  `log(price)`, the result will be well defined and not be -infinity. 
 
-Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoodsm which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be more scarce. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our understanding of a weakly positive relationship between median ZCTA rent and Airbnb price.  
+Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoods which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be more scarce directly in those neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our understanding of a weakly positive relationship between median ZCTA rent and Airbnb price.  
 
 
 # Part 2: 
@@ -1152,17 +1163,38 @@ ggplot() +
   geom_sf(data = bike_rental_points_joined %>% filter(in_study_area), 
           color = "#CA1551",
           stroke = FALSE,
-          alpha = 0.7,
+          alpha = 0.6,
           size = 1) +
   theme_void()
 
 
 ```
 
+This maps shows that most bike rental locations are located in San Francisco, along with seemingly a second network in Oakland, and just a handful in San Mateo. Digging deeper into the OSM data, we see that there are a total of `r nrow(bike_rental_points_joined %>% filter(in_study_area))` bike rental stations in our study area. And while most of these don't have explicit names, there are `r bike_rental_points_joined %>% filter(in_study_area) %>% count(brand) %>% filter(brand == "Bay Wheels") %>% pull(n)`marked as belonging to Bay Wheels, which is the main bikeshare station serving San Francisco, San Jose and the East Bay.
+
+### Creating buffers around bike share stations
 
 ```{r creating_buffers}
 
+# ---- Create buffer around bike stations ----
+bike_rental_points_buffered = bike_rental_points_joined %>% 
+  filter(in_study_area) %>% 
+  st_buffer(200)
+
+airbnbs_within_200m_of_bikes = airbnb_data_corrected %>% 
+  st_intersection(bike_rental_points_buffered)
+
+# ---- Count unique Airbnbs ------
+unique_airbnbs_in_buffer = airbnbs_within_200m_of_bikes %>% 
+  st_drop_geometry() %>% 
+  count(id, sort = TRUE)
+
+count_airbmbs_close_to_bikes = nrow(unique_airbnbs_in_buffer)
+count_total_airbnbs = nrow(airbnb_data_corrected)
 ```
+
+Next, we create 200 meter buffers around the bike share stations in our study area, and then perform a spatial join to see which Airbnbs fall within these buffer areas. Overall,  `r count_airbmbs_close_to_bikes` unique Airbnbs (or `r ((count_airbmbs_close_to_bikes/ count_total_airbnbs) %>% round(3))*100`% of Airbnbs) are within the 200 meter buffer of bike stations. For me, this would help decide where to choose an Airbnb if I was going to San Francisco as I personally love biking. But I would have doubts about the effectiveness of this strategy given that Open Street Map data can often be incomplete or out of date. So it is likely that this is not a full or accurate list of Airbnbs that currently meet our criteria. 
+
 
 # Spatial Analysis
 
