@@ -19,6 +19,13 @@ bibliography: references.bib
 
 # Introduction
 
+The American Community Survey data we will be making use of in this paper is a classic example of "old" spatial data, which  are traditional, detailed datasets that are often specifically designed and collected for use in social science research. They are very detailed, accurate and 
+
+
+The problems with these "old" spatial datasets is that they are very costly to produce, and therfore usually only available at low frequencies. And because of privacy concerns, they are often only available at coarser geographic resolutions. 
+
+This is in contrast to the Airbnb data, which is a "new" form of spatial data
+
 # Data Collection 
 
 ## 1.1 Collecting and importing the data
@@ -44,6 +51,7 @@ library(geomtextpath)
 library(ggh4x)
 library(units)
 library(nngeo)
+library(ggsn)
 # acs_vars = load_variables(year = 2020, dataset = "acs5")
 
 ```
@@ -94,28 +102,28 @@ airbnb_data = bind_rows(oakland_data, sfo_data, san_mateo_data)
 
 # ---- Zip code data
 
-# Download and read in zip code data
-dir.create("data/raw-data/", showWarnings = FALSE)
-# Get download URL for geojson by examining API request logs on the website:
-# https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q
-
-# Try downloading Berkeley zip codes. Sometimes we get a 500 error in which
-# case we use backup local copy
-fpath  = tryCatch(
-  expr = {download.file("https://geodata.lib.berkeley.edu/download/file/ark28722-s7888q-geojson.json",
-              destfile = here("data", "bay_area_zip_codes.geojson"))
-    here("data","bay_area_zip_codes.geojson") 
-    },
-  warning = function(w) {
-    here("data","bay_area_zipcodes.geojson") 
-    },
-  error = function(e) {
-    here("data","bay_area_zipcodes.geojson") 
-    }
-)
-
-zip_codes = st_read(fpath, quiet = TRUE) %>% 
-  clean_names()
+# # Download and read in zip code data
+# dir.create("data/raw-data/", showWarnings = FALSE)
+# # Get download URL for geojson by examining API request logs on the website:
+# # https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q
+# 
+# # Try downloading Berkeley zip codes. Sometimes we get a 500 error in which
+# # case we use backup local copy
+# fpath  = tryCatch(
+#   expr = {download.file("https://geodata.lib.berkeley.edu/download/file/ark28722-s7888q-geojson.json",
+#               destfile = here("data", "bay_area_zip_codes.geojson"))
+#     here("data","bay_area_zip_codes.geojson") 
+#     },
+#   warning = function(w) {
+#     here("data","bay_area_zipcodes.geojson") 
+#     },
+#   error = function(e) {
+#     here("data","bay_area_zipcodes.geojson") 
+#     }
+# )
+# 
+# zip_codes = st_read(fpath, quiet = TRUE) %>% 
+#   clean_names()
 
 # ---- ACS and ZCTA data
 
@@ -268,9 +276,6 @@ I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for
 airbnb_data_projected = airbnb_data_cleaned %>% 
   st_transform("EPSG:7131")
 
-zip_codes = zip_codes %>% 
-  st_transform("EPSG:7131")
-
 acs_data_raw = acs_data_raw %>% 
   st_transform("EPSG:7131")
 
@@ -366,8 +371,79 @@ acs_data_cropped = acs_data_raw %>%
 # ---- Define final datasets -----
 airbnb_points = airbnb_data_corrected
 acs_zcta_polygons = acs_data_cropped
+```
 
+We also create a heaxgonal honeycomb grid for our point level listing data, which will aid us when creating heatmaps, and allow us to visualize the relative density and prices of airbnb listings easily (See Map 3 and Map 4 for examples of these hex grids in action). 
 
+```{r}
+#| cache: true
+
+# ---- Create hex honeycomb grid for data ----
+
+# Create blank hex grid
+airbnb_area_honeycomb_grid = st_make_grid(airbnb_points, 
+                                   c(1000, 1000), 
+                                   what = "polygons", 
+                                   square = FALSE) %>% 
+                            st_as_sf() %>% 
+  mutate(hex_id = row_number()) %>% 
+  rename(geometry = x)
+
+# ---- Calculate hexagon level variables using intersections ----
+
+# Join airbnb point data to hex grid polygon data
+airbnb_points = airbnb_points %>% 
+  st_join(airbnb_area_honeycomb_grid,
+          left = TRUE) 
+
+# Calculate hex level data on # listings and avg price
+hex_grid_listing_info = airbnb_points %>% 
+  st_drop_geometry() %>% 
+  group_by(hex_id) %>% 
+  summarize(avg_hex_price = mean(price, na.rm = TRUE),
+            number_of_listings = n()) %>% 
+  ungroup() %>% 
+  mutate(avg_hex_price_ntile = as_factor(ntile(avg_hex_price, 6)),
+         number_of_listings_ntile = as_factor(ntile(number_of_listings, 6))
+         )
+
+# Join zcta polygon data to hex grid polygon data
+zcs_zcta_polygons_hex_polygons_ints = acs_zcta_polygons %>% 
+  mutate(zcta_area = st_area(.)) %>% 
+  st_intersection(
+    airbnb_area_honeycomb_grid %>% 
+      mutate(hex_area = st_area(.))  %>% 
+      select(hex_id, hex_area),
+    left = TRUE
+  ) %>% 
+  mutate(area_ints = st_area(.)) %>% 
+  ungroup()
+
+# Calculate hex level ACS values by taking area weighted average across zcta intersections
+hex_grid_zcta_information = zcs_zcta_polygons_hex_polygons_ints %>% 
+  st_drop_geometry() %>% 
+  group_by(hex_id) %>% 
+  # Calculate the pct of the hex area that falls into each zcta intersection
+  mutate(pct_zcta_in_hex = (area_ints / sum(area_ints))) %>% 
+  # Calculate area weighted average across zctas the hex falls into, and 
+  # collapse into one row per hex
+  summarize(pct_bach_higher_e = sum(pct_zcta_in_hex * pct_bach_higher_e),
+         median_rent_e = sum(pct_zcta_in_hex * median_rent_e),
+         hex_id = first(hex_id),
+         sum_pct_zcta_in_hex = sum(pct_zcta_in_hex)
+         )
+
+# ---- Left join with original hexagons for correct geometries -----
+
+# this has 3382 hexagons as it covers the whole study area
+hex_grid_acs_variables = airbnb_area_honeycomb_grid %>% 
+  left_join(hex_grid_zcta_information,
+            by = "hex_id")
+
+hex_grid_airbnb_variables = airbnb_area_honeycomb_grid %>% 
+  left_join(hex_grid_listing_info,
+            by = "hex_id"
+            )
 
 ```
 
@@ -384,7 +460,7 @@ I also use manually created equal interval bins in order to make the bins human 
 
 4) I choose to include the surrounding ZCTA boundaries as a basemap layer and do not actually map their values (which in this case would be 0 becuase there are no Airbmbs in these surrounding ZCTAs). I intentionally do not list these light gray ZCTAs in the legend as I do not want the reader to focus on these neighborhoods. They are there simpply to frame the outline of the Bay Area and perhaps serve as helpful geographic context for readers familiar with the Bay Area.
 
-5) Finally we also provide interactive maps using `library(mapview)` for exploratory purposes. 
+5) Finally we also provide interactive maps using `library(mapview)` just for exploratory purposes, which can be be found in the `interactive` tabs.
 
 
 ### Map 1.1: Count of Airbnb listings
@@ -494,6 +570,20 @@ num_listings_histogram_legend = listing_bucket_counts %>%
 
 
 # ----- Create choropleth map ----------
+
+# Try to create one scalebar for use in all our maps
+themed_scalebar =   scalebar(airbnb_count_by_zcta, 
+           dist = 5, 
+           dist_unit = "km", 
+           transform = FALSE,
+           location = "bottomleft",
+           height = 0.01,
+           st.size = 4,
+           st.color = "grey80", 
+           box.fill = c("gray90", "gray98"),
+           box.color = "gray90", 
+           border.size = 0.2)
+
 # Make map
 airbnb_listings_by_zips_plot = airbnb_count_by_zcta %>% 
   ggplot(aes(fill = count_buckets)) + 
@@ -503,8 +593,20 @@ airbnb_listings_by_zips_plot = airbnb_count_by_zcta %>%
                        direction = 1) +
   theme_void() +
   guides(fill = "none") +
-  theme(plot.margin = margin())
-
+  theme(plot.margin = margin()) +
+  themed_scalebar
+  # scalebar(airbnb_count_by_zcta, 
+  #          dist = 5, 
+  #          dist_unit = "km", 
+  #          transform = FALSE,
+  #          location = "bottomleft",
+  #          height = 0.01,
+  #          st.size = 4,
+  #          st.color = "grey80", 
+  #          box.fill = c("gray90", "gray98"),
+  #          box.color = "gray90", 
+  #          border.size = 0.2)
+airbnb_listings_by_zips_plot
 
 
 
@@ -557,6 +659,12 @@ mapview(airbnb_count_by_zcta,
 # ----- Calculate avg price by zcta ----------
 
 airbnb_avg_price_by_zcta = airbnb_points %>% 
+  st_drop_geometry() %>% 
+  group_by(zcta) %>% 
+  summarize(avg_price = mean(price)) %>% 
+  ungroup() %>% 
+  right_join(acs_zcta_polygons, 
+             by = c("zcta")) %>% 
   st_drop_geometry() %>% 
   group_by(zcta) %>% 
   summarize(avg_price = mean(price)) %>% 
@@ -663,7 +771,8 @@ airbnb_avg_price_by_zips_plot = airbnb_avg_price_by_zcta %>%
                        palette = "GnBu",
                        direction = 1) +
   theme_void() +
-  guides(fill = "none")
+  guides(fill = "none") +
+  themed_scalebar
 
 
 # ----- Paste together with patchwork --------
@@ -1028,9 +1137,22 @@ If I had to use this classification to evaluate where Airbnbs would cluster, my 
 
 ```{r}
 #| cache: true
+hex_grid_airbnb_variables %>% filter(!is.na(avg_hex_price))
+
+
+hex_grid_airbnb_variables = hex_grid_airbnb_variables %>% 
+  mutate(log_avg_hex_price = log(avg_hex_price))
+
+mapview(hex_grid_acs_variables,
+        zcol = "pct_bach_higher_e",
+        col.regions=brewer.pal(9, "GnBu"))
+
+mapview(hex_grid_airbnb_variables %>% filter(!is.na(avg_hex_price)),
+        zcol = "avg_hex_price",
+        col.regions=brewer.pal(9, "Oranges"))
 
 # For the 4 listings with price = 0, change to price = 1 so log is defined
-airbnb_data_log_corrected = airbnb_data_corrected %>% 
+airbnb_data_log_corrected = airbnb_points %>% 
   mutate(price = case_when(
     price == 0 ~ 1,
     TRUE ~ price
@@ -1038,6 +1160,10 @@ airbnb_data_log_corrected = airbnb_data_corrected %>%
   # Separate price into quartiles
   price_ntile = ntile(price, 4)
   )
+
+airbnb_data_log_corrected %>% 
+  pull(price) %>% 
+  hist()
 
 # Make point plot + polygon plot of ln price vs median rent
 ggplot() +
@@ -1058,7 +1184,7 @@ ggplot() +
           aes(color = log(price)),
           # color = "#EF8A17",
           stroke = FALSE,
-          alpha = 0.8,
+          alpha = 0.6,
           size = 0.3) +
   scale_color_fermenter(na.value = "grey40",
                        palette = "Oranges",
@@ -1073,9 +1199,9 @@ ggplot() +
                                label.position = "left",
                                draw.ulim = TRUE,
                                draw.llim = TRUE,
-                               title.vjust = 1,
                                override.aes = list(alpha = 0.2))
          ) +
+  # facet_wrap(~price_ntile) +
   theme_void() +
   theme(text = element_text(family = "Lato"),
         legend.title = element_text(face = "bold.italic"),
@@ -1119,7 +1245,7 @@ Map 3 shows the log price of Airbnb listings (orange points) overlaid on top of 
 
 2) There are 4 listings which have a list price of \$0 a night. I manually increment these values to be \$1 a night so that when we take  `log(price)`, the result will be well defined and not be -infinity. 
 
-Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoods which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be more scarce directly in those neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our understanding of a weakly positive relationship between median ZCTA rent and Airbnb price.  
+Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoods which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be scarce in those neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our reading of the map as a weakly positive relationship between median ZCTA rent and Airbnb price.  
 
 
 # Part 2: 
@@ -1133,7 +1259,6 @@ Some potential raster datasets we could use to improve to this analysis would be
 
 ## Analysis Methods Explained
 A heatmap of OSM sourced Bike rental locations are provided below
-
 
 ### Map 4: <span style="color:#CA1551">Bike Rental</span> locations from Open Street Map
 
@@ -1181,7 +1306,7 @@ bike_rental_points_buffered = bike_rental_points_joined %>%
   filter(in_study_area) %>% 
   st_buffer(200)
 
-airbnbs_within_200m_of_bikes = airbnb_data_corrected %>% 
+airbnbs_within_200m_of_bikes = airbnb_points %>% 
   st_intersection(bike_rental_points_buffered)
 
 # ---- Count unique Airbnbs ------
@@ -1190,16 +1315,15 @@ unique_airbnbs_in_buffer = airbnbs_within_200m_of_bikes %>%
   count(id, sort = TRUE)
 
 count_airbmbs_close_to_bikes = nrow(unique_airbnbs_in_buffer)
-count_total_airbnbs = nrow(airbnb_data_corrected)
+count_total_airbnbs = nrow(airbnb_points)
 ```
 
-Next, we create 200 meter buffers around the bike share stations in our study area, and then perform a spatial join to see which Airbnbs fall within these buffer areas. Overall,  `r count_airbmbs_close_to_bikes` unique Airbnbs (or `r ((count_airbmbs_close_to_bikes/ count_total_airbnbs) %>% round(3))*100`% of Airbnbs) are within the 200 meter buffer of bike stations. For me, this would help decide where to choose an Airbnb if I was going to San Francisco as I personally love biking. But I would have doubts about the effectiveness of this strategy given that Open Street Map data can often be incomplete or out of date. So it is likely that this is not a full or accurate list of Airbnbs that currently meet our criteria. 
+Next, we create 200 meter buffers around the bike share stations in our study area, and then perform a spatial join to see which Airbnbs fall within these buffer areas. Overall,  `r count_airbmbs_close_to_bikes` unique Airbnbs (or `r ((count_airbmbs_close_to_bikes/ count_total_airbnbs) %>% round(3))*100`% of Airbnbs) are within the 200 meter buffer of bike stations. For me, this would help decide where to choose an Airbnb if I was going to San Francisco as I personally love biking. But I would have doubts about the effectiveness of this strategy given that Open Street Map data can often be incomplete or out of date. So it is likely that this is not a full or accurate list of bikeshare friendly Airbnbs that meet our criteria.
 
 
 # Spatial Analysis
 
 # Conclusion
-
 
 # Appendix
 
