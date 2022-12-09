@@ -1271,6 +1271,7 @@ If I had to use this classification to evaluate where Airbnbs would cluster, my 
 
 ```{r create_airbnb_log_price_vs_median_rent_map}
 #| cache: false
+#| fig-height: 9.5
 
 # mapview(hex_grid_acs_variables,
 #         zcol = "pct_bach_higher_e",
@@ -1309,55 +1310,58 @@ pal_fun_blues <- colorNumeric("Blues", NULL, na.color= "grey90")
 
 
 # Make leaflet map
-leaflet() %>% addMapPane("background", zIndex = 400) %>%  
-              addMapPane("foreground", zIndex = 500) %>% 
-              addPolygons(data = acs_zcta_polygons_4326, 
-                          group="Median Rent", 
-                          color ='white',
-                          fillOpacity=0.4 ,
-                          fillColor= ~pal_fun_blues(median_rent_e),
-                            # ~colorQuantile("GnBu", 
-                            #                  median_rent_e,
-                            #                  na.color = "grey")(median_rent_e),
-                          weight = 1,
-                          # stroke = FALSE,
-                          options = pathOptions(pane = "background")) %>% 
-              addPolygons(data = hex_grid_airbnb_variables_4326,
-                          group="Avg Log Price",
-                          color='grey90',
-                          fillOpacity=0.5,
-                          fillColor= ~pal_fun_oranges(avg_log_hex_price),
-                            # ~colorQuantile("Oranges", 
-                            #                  avg_log_hex_price,
-                            #                  na.color = "grey")(avg_log_hex_price),
-                          weight = 1,
-                          # stroke = FALSE,
-                          options = pathOptions(pane = "foreground")) %>%
-              addLayersControl(overlayGroups = c("Median Rent", "Avg Log Price"),
-                               options = layersControlOptions(collapsed = FALSE)) %>% 
-              addLegend("bottomright",  # location
-                        pal=pal_fun_oranges,    # palette function
-                        values= hex_grid_airbnb_variables_4326$avg_log_hex_price,  # value to be passed to palette function
-                        title = 'Avg Ln(Price)',
-                        bins = seq(3,7, by = 1)) %>% 
-              addLegend("bottomright",  # location
-                        pal=pal_fun_blues,    # palette function
-                        values= acs_zcta_polygons_4326 %>% filter(!is.na(median_rent_e)) %>% pull(median_rent_e),  # value to be passed to palette function
-                        labFormat = labelFormat(prefix = "$"),
-                        title = 'Median Rent'#,
-                        # bins = c(500,1000, 1500,2000, 2500, 3000, 3500)
-                        )
+log_price_vs_rent_leaflet_map = leaflet() %>% addMapPane("background", zIndex = 400) %>%  
+  addMapPane("foreground", zIndex = 500) %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(data = acs_zcta_polygons_4326, 
+              group="Median Rent", 
+              color ='white',
+              fillOpacity=0.4 ,
+              fillColor= ~pal_fun_blues(median_rent_e),
+              weight = 1,
+              # stroke = FALSE,
+              options = pathOptions(pane = "background")) %>% 
+  addPolygons(data = hex_grid_airbnb_variables_4326,
+              group="Avg Log Price",
+              color='grey90',
+              fillOpacity=0.5,
+              fillColor= ~pal_fun_oranges(avg_log_hex_price),
+                # ~colorQuantile("Oranges", 
+                #                  avg_log_hex_price,
+                #                  na.color = "grey")(avg_log_hex_price),
+              weight = 1,
+              # stroke = FALSE,
+              options = pathOptions(pane = "foreground")) %>%
+  addLayersControl(overlayGroups = c("Median Rent", "Avg Log Price"),
+                   options = layersControlOptions(collapsed = FALSE)) %>% 
+  addLegend("bottomright",  # location
+            pal=pal_fun_oranges,    # palette function
+            values= hex_grid_airbnb_variables_4326$avg_log_hex_price,  # value to be passed to palette function
+            title = 'Avg Ln(Price)',
+            bins = seq(3,7, by = 1)) %>% 
+  addLegend("bottomright",  # location
+            pal=pal_fun_blues,    # palette function
+            values= acs_zcta_polygons_4326 %>% filter(!is.na(median_rent_e)) %>% pull(median_rent_e),  # value to be passed to palette function
+            labFormat = labelFormat(prefix = "$"),
+            title = 'Median Rent'#,
+            # bins = c(500,1000, 1500,2000, 2500, 3000, 3500)
+            )
 
 
 
 mapview(acs_zcta_polygons %>% filter(in_study_area),
         zcol = "median_rent_e",
         col.regions = brewer.pal(6,"Blues"),
-        layer.name = "Median Rent") +
+        layer.name = "Median Rent",
+        alpha.regions = 0.4,
+        col = "white") +
 mapview(hex_grid_airbnb_variables %>% filter(!is.na(avg_log_hex_price)),
         zcol = "avg_log_hex_price",
         col.regions = brewer.pal(6, "Oranges"),
-        layer.name = "Avg Log(Price)") 
+        layer.name = "Avg Log(Price)",
+        alpha.regions = 0.5,
+        color = "transparent",
+        lwd = 0.2) 
 
 
 
@@ -1384,18 +1388,24 @@ zcta_level_correlation_price_rent = airbnb_avg_price_by_zcta %>%
   round(2)
 
 
+
+
 ```
 
 
-Map 3 shows the log price of Airbnb listings (orange points) overlaid on top of a chorpoleth map of Median rent. Darker orange points are more expensive listings, and darker blue neighborhoods are higher median rent neighborhoods. I have made a couple of decisions in presenting the data that are justified below:
+Map 3 shows the average log price of Airbnb listings (orange points) overlaid on top of a chorpoleth map of Median rent. Darker orange points mean more expensive listings, and darker blue neighborhoods are higher median rent neighborhoods. I have made a couple of decisions in presenting the data that are justified below:
 
-1) I have set increased transparency of the Median Rent choropleth map so that we can reduce visual clutter and more easily see how the listings line up with Median rent. 
+1) I have aggregated the 13,000+ Airbnb points into hexagon grids and presented the average log price of all listings within the hexagon. This is because displaying all 13,000 points on the map was way too cluttered and we needed some way to aggregate points. I considered aggregating the listings to ZCTAs, but ZCTAs have very different sizes and I wanted aggregations of roughly equal areas. 
 
-3) I have turned the map title into a legend by making use of colors. This helps prime the reader for the two different variables that they will be seeing on the map. I still include two actual continuous color ramp legends to represent the scales that the colors can go to. 
+2) I have used an interactive map because the ability to toggle layers on and off is very helpful when comparing the scales of two variables as we are doing here. In this case, if you hover over the layer button (right below the zoom button) and toggle the `Median Rent` layer on and off repeatedly. you can visually compare exactly where the low and high priced airbnb neighborhoods overlap the high and low median rent neighborhoods. 
 
-2) There are 4 listings which have a list price of \$0 a night. I manually increment these values to be \$1 a night so that when we take  `log(price)`, the result will be well defined and not be -infinity. 
+2) I have set increased transparency of the Median Rent layer so that we can visually send that layer into the background as we have already seen this distribution before in other maps. This also allows us to more easily see how listing prices line up with Median rent. 
 
-Generally we see that dark orange points tend to be around, and close to dark blue neighborhoods, but not necessarily in them. In other words, expensive Airbnbs tend to be near expensive neighborhoods which makes sense as some of these expensive neighborhoods may be tourist destinations and housing may be scarce in those neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our reading of the map as a weakly positive relationship between median ZCTA rent and Airbnb price.  
+3) I have turned the map title into a pseudo-legend by making use of colors. This helps prime the reader for the two different variables that they will be seeing on the map. I also include two  continuous color ramp legends to represent the scales of the different colors.
+
+4) There are 4 listings which have a list price of \$0 a night. I manually increment these values to be \$1 a night so that when we take  `log(price)`, the result will be well defined and not be -infinity. 
+
+Generally we see that neighborhoods with high listing prices (dark orange) tend to clustered near the coast, and not necesarily near high rent (dark blue) neighborhoods. There are some clusters of high listing price neighborhoods close to high rent neighborhoods, particularly in San Mateo near the Silicon Valley belt. But the highest listing neighborhoods are not generally in the highest rent neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our reading of a pretty weakly positive relationship between median ZCTA rent and Airbnb price.  
 
 
 # Part 2: 
