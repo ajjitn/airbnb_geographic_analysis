@@ -9,6 +9,7 @@ stringr
 forcats
 sf
 tidylog
+osmdata
 mapview
 tmap
 here
@@ -18,11 +19,15 @@ leaflet
 leaflet.extras2
 paletteer
 ggpubr
+RColorBrewer
 patchwork
 geomtextpath
 ggh4x
 units
 nngeo
-RColorBrewer
-osmdata
 ggsn
+leaflet.extras
+hereR
+osrm
+dotenv
+gt

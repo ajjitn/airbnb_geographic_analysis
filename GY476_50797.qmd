@@ -1,5 +1,5 @@
 ---
-title: "Airbnb Geographic Analysis"
+title: "Analyzing Airbnbs and Bikshare in San Francisco"
 format:
   html:
     code-fold: true
@@ -7,6 +7,10 @@ format:
     fig-width: 7
     fig-height: 7
     toc: true
+  docx:
+    fig-width: 7
+    fig-height: 7
+prefer-html: true
 execute:
   warning: false
   error: false
@@ -14,30 +18,21 @@ execute:
 editor_options: 
   chunk_output_type: console
 bibliography: references.bib
-
 ---
 
-# Introduction
+```{r, load_libs}
+#| output: false
+#| eval: true
+#| echo: false
 
-This paper will look at how airbnb listings are distributed across the Bay Area, how they are correlated with housing costs, 
-
-The American Community Survey data we will be using is a classic example of "old" spatial data, which are traditional, detailed datasets that are often specifically designed and collected for use in social science research. They are very detailed, accurate,a and have margins of error, as they are often assembled by teams of statisticians in government agencies (in this case the Census Bureau). The problems with these "old" spatial data are that they are very costly to produce, and therefore usually only available at low frequencies. And because of privacy concerns, they are often only available at coarse geographic resolutions.
-
-This is in contrast to the Airbnb data, which is a "new" form of spatial data. These newer forms of spatial data were created as a part of the geo-data revolution which is producing more geographic data than ever before. geo-data are often collected automatically and assembled for business purposes and purely by accident are also available for researchers. The benefits of these data are that they are available at very frequent intervals (our Airbnb data for example were all scrpaed within the last month), have very granular geographies, and cover many populations not traditionally covered by old spatial data. 
-
-The disadvantages of these new spatial datasets are that they are subject to many biases, often do not contain measures of uncertainty, and may violate privacy rights by allowins individuals to be reidentified. In the case of Airbnb data for example, we only have pricing data on the small sliver of the rental market that chooses to upload their listings to Airbnb, and is not at all representative of the larger housing, or even tourist/rental market. Furthermore, while Airbnb does some validation, it is not comprehensive and it is entirely possible that this data include fake listings which would skew the data considerably. 
-
-# Data Collection 
-
-
-We first programmatically download our data directly from URLs to make the data import process as reproducible as possible. 
-
-```{r libraries}
 library(tidyverse)
 library(sf)
 library(tidylog)
 library(osmdata)
 library(mapview)
+library(leaflet)
+library(leaflet.extras2)
+library(leaflet.extras)
 library(tmap)
 # For painless filepath pointing
 library(here)
@@ -54,13 +49,25 @@ library(ggh4x)
 library(units)
 library(nngeo)
 library(ggsn)
+library(hereR)
+library(osrm)
+library(dotenv)
+library(gt)
+
+# Set HERE API keys
+dotenv::load_dot_env()
+set_key(Sys.getenv("here_api_key"))
+
 # acs_vars = load_variables(year = 2020, dataset = "acs5")
 
 ```
 
 ```{r data_read_in}
 #| output: false
+#| eval: true
+#| echo: false
 #| cache: true
+
 
 #----- Read in data ------------
 
@@ -88,7 +95,7 @@ download_and_readin_inside_airbnb_data = function(url, city){
 }
 
 
-# Download and read in Airbnb data, we got these URLs from looking at developer console in HTML pages
+# Download airbnb data, I got these URLs from looking at developer console on Inside Airbnb webpage
 sfo_data = download_and_readin_inside_airbnb_data(url =
                               "http://data.insideairbnb.com/united-states/ca/san-francisco/2022-09-07/data/listings.csv.gz",
                             city = "sfo")
@@ -99,13 +106,13 @@ san_mateo_data = download_and_readin_inside_airbnb_data(url =
                               "http://data.insideairbnb.com/united-states/ca/san-mateo-county/2022-09-19/data/listings.csv.gz",
                             city = "san_mateo")
 
-# Bind all data into one long dataframe, which is safe bc we have added a "city" column for easy identificiation
+# Bind all data into one long dataframe, which is safe bc I have added a "city" column for easy identification
 airbnb_data = bind_rows(oakland_data, sfo_data, san_mateo_data)
 
 # ---- ACS and ZCTA data
 
 # Use get_acs from tidycensus
-# Census servers often go down and get_acs fails intermittenetly. So if that
+# Census servers often go down and get_acs fails intermittently. So if that
 # happens read in local copy as backup
 acs_data_raw = tryCatch(
   expr = {
@@ -127,8 +134,7 @@ acs_data_raw = tryCatch(
                        survey = "acs5",
                        output = "wide",
                        # Allows us to get ZCTA geometries as sf dataframes
-                       geometry = TRUE,
-                       quiet = TRUE
+                       geometry = TRUE
     ) %>%
   janitor::clean_names() %>%
   # Calculate pct bach or higher using num and denom
@@ -149,12 +155,225 @@ acs_data_raw = tryCatch(
   }
   )
 
-
-# We will use acs_data in appendix to see how boundaries
+# Drop geometry column for now
 acs_data = acs_data_raw %>% 
   st_drop_geometry()
 
 # --- OSM Data ----
+
+# build an overpass query to get bike rental points in Bay Area
+query <- opq(bbox = "San Francisco Bay Area", timeout = 300) |> 
+  add_osm_feature(key = "amenity", value = "bicycle_rental")
+
+bike_rental_locations_osm <- osmdata_sf(query)
+
+# Just extract locations which are encoded as points
+bike_rental_points = bike_rental_locations_osm$osm_points %>% 
+  as_tibble() %>% 
+  st_as_sf() %>% 
+  # These 2 columns seem to be the most useful for identifying bikes in network
+  arrange(network, brand) %>% 
+  select(osm_id, name, network, brand, everything())
+  
+# ---- Download SFO County boundary ------
+
+# Download all CA counties
+sfo_county = tigris::counties(state = "CA", 
+                 cb = TRUE) %>% 
+  clean_names %>% 
+  # filter to San Francisco county
+  filter(name == "San Francisco") 
+
+
+# ---- Read in Bay Wheels bike data -----
+
+# Choose to focus analysis on just one start station ID
+chosen_station_id = "SF-F26"
+
+# Helper function to download zip file and read in CSV
+download_zip_and_read_csv = function(url){
+  last_part_of_url = basename(url)
+  download.file(url = url,
+                quiet = TRUE, 
+                destfile = str_glue("data/raw-data/{last_part_of_url}"))
+  read_csv(str_glue("data/raw-data/{last_part_of_url}"))
+  
+}
+
+
+bike_trip_data_nov = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202211-baywheeels-tripdata.csv.zip")
+bike_trip_data_oct = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202210-baywheels-tripdata.csv.zip")
+bike_trip_data_sep = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202209-baywheels-tripdata.csv.zip")
+bike_trip_data_aug = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202208-baywheels-tripdata.csv.zip")
+bike_trip_data_jul = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202207-baywheels-tripdata.csv.zip")
+bike_trip_data_jun = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202206-baywheels-tripdata.csv.zip")
+
+# Combine rows together, filter to just one start station
+bike_trip_data_combined = bind_rows(
+  bike_trip_data_jun,
+  bike_trip_data_jul,
+  bike_trip_data_aug, 
+  bike_trip_data_sep,
+  bike_trip_data_oct, 
+  bike_trip_data_nov
+  ) %>% 
+  # filter to chosen station
+  filter(start_station_id == chosen_station_id)
+  
+
+bike_trip_data = bike_trip_data_combined
+```
+
+#### GY476
+#### Candidate 50797
+#### Word Count: 2985
+
+# Introduction
+
+The last few decades have seen an explosion of new geographic data that describe the physical and digital world around us [@miller2010data]. In this paper, I explore spatial data within the San Francisco Bay Area, a region that is home to many companies responsible for the worlds geodata production. Part 1 will analyze how Airbnb listings and prices vary with housing costs and education levels and Part 2 will perform routing analysis to compare car and biking travel times between docks in the Bay Wheels bikeshare system in San Francisco. 
+
+# Data
+I make use of 4 datasets in this project:
+
+-   *Airbnb listing data*: This is a dataset of Airbnb listings produced by [Inside Airbnb](http://insideairbnb.com/). I use the listing data for San Francisco, San Mateo and Oakland, which were scraped in September 2022. It contains variables like price and number of beds for each of the `r nrow(airbnb_data)` listings.
+
+-   *ACS Demographic Data*: Using `library(tidycensus)` I download the median rent per bedroom, and the percentage of adults with at least a bachelors degree variables for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. The percentage of adults with at least a bachelor's degree was calculated from Census Table B23006 and I use the number of adults over the age of 25 for the denominator.
+
+-   *OSM Bike Rental data*: These are user reported point locations of bike rentals in Open Street Map and includes both private storefronts and bike rental systems/docking stations. Using `library(osmdata)`, I download Amenity data on the 253 bike rental stations in San Francisco.
+
+-   *Bay Wheels Trip Data*: Bay Wheels is a subsidiary of Lyft and the regional bikeshare system serving the Bay Area. I use their public [system data](https://www.lyft.com/bikes/bay-wheels/system-data) from San Francisco over the last 6 months, which contains anonymized bike trip data including duration, time and dates, and start/end stations.
+
+I programmatically download our data directly from download URLs wherever possible to make the data import process reproducible.
+
+```{r data_read_in_code_show}
+#| output: false
+#| cache: false
+#| eval: false
+#| echo: true
+
+library(tidyverse)
+library(sf)
+library(tidylog)
+library(osmdata)
+library(mapview)
+library(leaflet)
+library(leaflet.extras2)
+library(leaflet.extras)
+library(tmap)
+# For painless filepath pointing
+library(here)
+library(janitor)
+library(tidycensus)
+library(leaflet.extras2)
+library(paletteer)
+library(ggpubr)
+library(RColorBrewer)
+library(patchwork)
+library(grid)
+library(geomtextpath)
+library(ggh4x)
+library(units)
+library(nngeo)
+library(ggsn)
+library(hereR)
+library(osrm)
+library(dotenv)
+
+# Set HERE API keys
+dotenv::load_dot_env()
+set_key(Sys.getenv("here_api_key"))
+
+
+
+# ---- Read in Airbnb data ------
+
+# Helper fxn to download csv.gz file from Inside Airbnb, unzip and read in
+download_and_readin_inside_airbnb_data = function(url, city){
+  
+  # Set data filepath
+  data_filepath = here(str_glue("data/raw-data/{city}.csv.gz"))
+  
+  # Download data directly from Inside Airbnb website
+  dir.create(here("data/raw-data/"), showWarnings = FALSE)
+  download.file(url, destfile = data_filepath)
+
+
+  # Read in data
+  read_csv(here(data_filepath)) %>% 
+    st_as_sf(coords = c("longitude", "latitude")) %>% 
+    # Since coords are lot/lng, this is EPSG 4326
+    st_set_crs("EPSG:4326") %>% 
+    # To get nice and easily workable column names
+    janitor::clean_names() %>% 
+    mutate(city = city)
+}
+
+
+# Download airbnb data, I got these URLs from looking at developer console on Inside Airbnb webpage
+sfo_data = download_and_readin_inside_airbnb_data(url =
+                              "http://data.insideairbnb.com/united-states/ca/san-francisco/2022-09-07/data/listings.csv.gz",
+                            city = "sfo")
+oakland_data = download_and_readin_inside_airbnb_data(url =
+                              "http://data.insideairbnb.com/united-states/ca/oakland/2022-09-18/data/listings.csv.gz",
+                            city = "oakland")
+san_mateo_data = download_and_readin_inside_airbnb_data(url =
+                              "http://data.insideairbnb.com/united-states/ca/san-mateo-county/2022-09-19/data/listings.csv.gz",
+                            city = "san_mateo")
+
+# Bind all data into one long dataframe, which is safe bc I have added a "city" column for easy identification
+airbnb_data = bind_rows(oakland_data, sfo_data, san_mateo_data)
+
+# ---- Read in ACS and ZCTA data -----
+
+# Use get_acs from tidycensus
+# Census servers often go down and get_acs fails intermittently. So if that
+# happens read in local copy as backup
+acs_data_raw = tryCatch(
+  expr = {
+    suppressMessages(get_acs(
+                       # Get zcta level variables
+                       geography = "zcta",
+                       # Got these variable names by perusing data.census.gov website
+                       variables = c(median_rent = "B25031_001",
+                                     median_rent_as_pct_of_income = "B25071_001",
+                                     unemp_rate_16_plus = "S2301_C04_001",
+                                     num_bach_higher = "B23006_023",
+                                     num_25_64_for_bach_higher = "B23006_001"
+                                     # median_rent_no_bedroom = "B25031_002",
+                                     # median_rent_1_bedroom = "B25031_003",
+                                     # median_rent_2_bedroom ="B25031_004",
+                                     # median_rent_3_bedroom = "B25031_005"
+                                     ),
+                       year = 2020,
+                       survey = "acs5",
+                       output = "wide",
+                       # Allows us to get ZCTA geometries as sf dataframes
+                       geometry = TRUE
+    ) %>%
+  janitor::clean_names() %>%
+  # Calculate pct bach or higher using num and denom
+  mutate(pct_bach_higher_e = num_bach_higher_e/num_25_64_for_bach_higher_e,
+         pct_bach_higher_m = moe_ratio(
+           num = num_bach_higher_e,
+           denom = num_25_64_for_bach_higher_e,
+           moe_num = num_bach_higher_m, 
+           moe_denom = num_25_64_for_bach_higher_m
+         )) %>%
+  rename(zcta = geoid))
+  },
+  error = function (e) {
+    st_read("data/acs_zcta_data_raw_saved.geojson", quiet = TRUE)
+  },
+  warning = function (w) {
+    st_read("data/acs_zcta_data_raw_saved.geojson", quiet = TRUE)
+  }
+  )
+
+# Drop geometry column for now
+acs_data = acs_data_raw %>% 
+  st_drop_geometry()
+
+# --- Read in OSM Data ----
 
 # build an overpass query to get bike rental points in Bay Area
 query <- opq(bbox = "San Francisco Bay Area", timeout = 90) |> 
@@ -176,35 +395,88 @@ bike_rental_points = bike_rental_locations_osm$osm_points %>%
 sfo_county = tigris::counties(state = "CA", 
                  cb = TRUE) %>% 
   clean_names %>% 
+  # filter to San Francisco county
   filter(name == "San Francisco") 
 
 
+# ---- Read in Bay Wheels data -----
 
+# Choose to focus analysis on just one start station ID
+chosen_station_id = "SF-F26"
+
+# Helper function to download zip file and read in CSV
+download_zip_and_read_csv = function(url){
+  last_part_of_url = basename(url)
+  download.file(url = url,
+                quiet = TRUE, 
+                destfile = str_glue("data/raw-data/{last_part_of_url}"))
+  read_csv(str_glue("data/raw-data/{last_part_of_url}"))
+  
+}
+
+
+bike_trip_data_nov = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202211-baywheeels-tripdata.csv.zip")
+bike_trip_data_oct = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202210-baywheels-tripdata.csv.zip")
+bike_trip_data_sep = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202209-baywheels-tripdata.csv.zip")
+bike_trip_data_aug = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202208-baywheels-tripdata.csv.zip")
+bike_trip_data_jul = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202207-baywheels-tripdata.csv.zip")
+bike_trip_data_jun = download_zip_and_read_csv(url = "https://s3.amazonaws.com/baywheels-data/202206-baywheels-tripdata.csv.zip")
+
+# Combine rows together, filter to just one start station
+bike_trip_data_combined = bind_rows(
+  bike_trip_data_jun,
+  bike_trip_data_jul,
+  bike_trip_data_aug, 
+  bike_trip_data_sep,
+  bike_trip_data_oct, 
+  bike_trip_data_nov
+  ) %>% 
+  # filter to chosen station
+  filter(start_station_id == chosen_station_id)
+  
+
+bike_trip_data = bike_trip_data_combined
+```
+
+## Background on old and new spatial data
+
+The ACS data we are using is a classic example of "old" spatial data, which are traditional, detailed datasets specifically designed for social science research. However, they are often very costly, published infrequently and only available at coarse resolutions.
+
+This is in contrast to the Airbnb and Baywheels data, which are "new" forms of rich spatial data. These newer data are often collected automatically for business purposes and purely by accident are available for research [@arribas2014accidental]. These data can be very frequent (Airbnb data for example were all scraped within the last month), extremely granular, and are often much larger in size and scale [@miller2015data].
+
+The disadvantages of new spatial data are that they can be biased [@o2017weapons], often do not measure uncertainty, and may have significant privacy concerns. In the case of Airbnb data, it only contains a small sliver of the rental market and its possible for fake listings to be included. In this paper I combine old and new forms of spatial data to understand how Airbnbs are distributed throughout the Bay and how travel times within San Francisco vary.
+
+## Projections
+
+I use `EPSG:7131`, or the NAD83 State Plane projection for San Francisco, in all our datasets as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. This is a projected 2D conformal coordinate system that:
+
+-   preserves angles between locations
+-   is accurate for distance based calculations like buffers and travel time
+-   is suitable for the entirety of the Bay Area.
+
+```{r projecting_data}
+#| cache: true
+
+airbnb_data = airbnb_data %>% 
+  st_transform("EPSG:7131")
+
+acs_data_raw = acs_data_raw %>% 
+  st_transform("EPSG:7131")
+
+bike_rental_points = bike_rental_points %>% 
+  st_transform("EPSG:7131")
+
+sfo_county = sfo_county %>% 
+  st_transform("EPSG:7131")
 
 ```
 
-# Data Discussion 
-
-## Dataset Overview
-I make use of 4 datasets in this project:
-
-- Airbnb listing data: This is a periodically published snapshot of Airbnb listings in various global cities produced by Murray Cox on his website [Inside Airbnb](http://insideairbnb.com/). We programmatically download the zipped csv files containing listing data for San Francisco, San Mateo and Oakland, which will be our study area. The data for these three cities were scraped on 2022-09-07, 2022-09-19, and 2022-09-18 respectively and contains variables such as price, number of beds/baths, and review information for each of the `r nrow(airbnb_data)` total listings.
-
-- ACS Demographic Data: Using `library(tidycensus)` we download demographic information for each Zip Code Tabulation Area (ZCTA) in the Bay Area from the 2016-2020 5 year ACS. Specifically we look at the Median Rent per bedroom, and the percentage of adults with at least a bachelors degree. These variables give us a rough estimate about the housing costs and education levels within each Bay Area neighborhood. The percentage of adults with at least a bachelor's degree was calculated from Census Table B23006. And in line with Census recommendations, we use the number of adults over the age of 25 for the denominator of this percentage. 
-
-    The 5 year ACS survey contains average values from 5 years of data collection in order to provide robust and precise estimates with low standard errors. The tradeoff is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align with the airbnb data which was scraped in 2022, but is likely still the best estimate of the demographic composition of these neighborhoods.
-
-    ZCTAs are generalized representations of zip codes, and in most cases are very similar to zip codes. But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively (see Appendix A for a detailed comparison). For the sake of standardization, in this paper we will always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. And whenever I refer to "zip codes", these will always mean Zip Code Tabulation Areas. If we had used USPS zip code level geographies (like [this data](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q) from Berkeley Geodata library) we would have to find a way to merge zip codes to ZCTA's and deal with zip codes that fall into multiple ZCTA's when working with ACS data. 
-
-
-- OSM Bike Rental Location: Using the overpass API and `library(osmdata)` in R, we download OSM Amenity data on bike rental stations in the Bay Area. These are user reported point locations of where bike stations are located in Open Street Map and include both private and municipal bike rental locations.
-
 ## Data Cleaning
 
-For the Airbnb data, we convert the `price` column from a character vector into a numeric vector by removing commas, and `$` signs from the column. This will allow us to treat this column as numeric when performing analyses later. After some exploratory analysis, we also decide to drop the top 0.5% most expensive Airbnb listings from this analysis as they are very high outliers. This corresponds to dropping 67 listings with prices greater than or equal to $2500 per night. For context, the vast majority of listings have prices between \$50 and \$500 a night. And upon visual inspection we see that most of these dropped listings don't have any reviews and may not be real, justifying our decision. 
+After exploratory analysis, I drop the top 0.5% most expensive Airbnb listings (67 listings with prices greater than \$2500 per night) as they are very high outliers. The vast majority of listings have prices between \$50 and \$500 a night. And upon visual inspection that most of the dropped listings don't have any reviews and may be fake, justifying our decision.
 
 ```{r cleaning_data}
-#| cache: true
+#| cache: false
 #| output: false
 
 # -----  Clean Airbnb data ---------
@@ -233,7 +505,7 @@ airbnb_data_cleaned = airbnb_data %>%
 # Top 0.5% of listings is effectively 67 listings with prices >= $2500
 # Many of these outliers don't have any reviews and suggest they can be safely
 # removed. There are 4 listings with a listed price of 0, but 2 do have
-# reviews so we decide to keep them in
+# reviews so I decide to keep them in
 top_outlier_listings = airbnb_data_cleaned %>% 
   slice_max(price, 
             prop = 0.005) 
@@ -242,7 +514,7 @@ airbnb_data_cleaned = airbnb_data_cleaned %>%
   # This effectively removes top 0.5% of highest priced listings, which is 
   # 67/13415 listings. Many of these outliers don't have any reviews and suggest
   # they can be safely removed. There are 4 listings with a listed price of 0, 
-  # but 2 do have reviews so we decide to keep them in
+  # but 2 do have reviews so I decide to keep them in
   filter(price < 2500)
 
 
@@ -255,45 +527,98 @@ outlier_dropped_listings_price_histogram = top_outlier_listings %>%
 
 ```
 
-For the San Francisco County boundaries, we remove some small islands which are included in the county boundary becuase the maps we will be making with these data only include bike stations within mainland San Francisco. And while removing the small islands is a small factual omission, it will make the resulting San Francisco level maps much more readable and allow users to focus in on the patterns of importance within mainland San Francisco.
+I filter the Bay Wheels bike data to trips that start at Station `SF-F26`, or Union Square. Routing analyses can blow up in size with many stations. And this is a relatively central station so results will be relatively transferable.
 
-```{r cleaning_sfo_county_data}
+```{r clean_baywheels_bike_data}
+#| cache: true
+```
+
+I also perform other data cleaning steps, including:
+
+-   Removing small islands from the SF County boundary for easier to read maps
+-   Removing probable duplicates from OSM bike rental locations
+-   Taking the centroid of stations in the Bay Wheels data
+-   Cropping all bike data to San Francisco
+-   Assigning ZCTAs to each Airbnb with distance based joins
+-   Creating a bounding box for our study area to crop our ACS data
+-   Creating a hexagonal grid of our study area
+
+More details can be found in the code below.
+
+```{r data_cleaning}
 #| cache: true
 #| output: false
+
+# ---- Clean Bike Share data -----
+
+bike_trip_data_cleaned = bike_trip_data %>% 
+  filter(!is.na(end_station_id)  & !is.na(start_station_id)) %>% 
+  # One row with a seemingly invalid ID which I throw out
+  filter(start_station_id != "Lab - Howard") %>%
+  mutate(duration = ended_at - started_at) %>% 
+  select(start_station_name,
+         start_station_id,
+         end_station_name,
+         end_station_id,
+         duration,
+         everything()
+         ) %>% 
+  # Add id column which combines start and stations
+  mutate(station_combo_id = str_glue("{start_station_id}_{end_station_id}"))
+
+
+# Calculate all unique start and end stations from data
+start_stations = bike_trip_data_cleaned %>% 
+  distinct(start_station_id, start_lng, start_lat) %>% 
+  st_as_sf(coords = c("start_lng", "start_lat"), crs = "EPSG:4326") %>%
+  st_transform("EPSG:7131") %>% 
+  group_by(start_station_id) %>% 
+  # Same station id can have very slightly different lat/lons bc of differences
+  # in bike racks. So I take centroid
+  summarise(geometry = st_union(geometry), .groups = "keep") %>% 
+  st_centroid()
+
+end_stations = bike_trip_data_cleaned %>% 
+  distinct(end_station_id, end_lng, end_lat) %>% 
+  st_as_sf(coords = c("end_lng", "end_lat"), crs = "EPSG:4326") %>%
+  st_transform("EPSG:7131") %>% 
+  group_by(end_station_id) %>% 
+  # Same station id can have very slightly different lat/lons bc of differences
+  # in bike racks. So I take centroid
+  summarise(geometry = st_union(geometry), .groups = "keep") %>% 
+  st_centroid()
+
 
 
 # ---- Clean up SFO county data ----
 
-# Trim SFO boundary to just mainalnd SF, and remove small islands
+# Trim SFO boundary to just mainland SF, and remove small islands
 
 # SF county includes some small islands like Treasure island, and an island in 
-# the Pacific. To make our maps more readable, we remove these islands from the
-# extent of the county
+# the Pacific. To make our maps more readable, I remove these islands from the
+# extent of the county. While removing the small islands is a small factual 
+# omission, it will make the resulting maps much more readable.
+
 sfo_county_boundary = sfo_county %>% 
-  # Convert myultipolygon into polygon data, which splits up one row sf dataframe
+  # Convert multiplication into polygon data, which splits up one row sf dataframe
   # into multi row sf dataframe with each distinct polygon getting its own row
   st_cast("POLYGON") %>% 
   mutate(area = st_area(.)) %>% 
-  # Keep largest area polygon, which shouuld just be mainland SF county polygon
+  # Keep largest area polygon, which should just be mainland SF county polygon
   top_n(1, area)
-```
-
-For the OSM bike data, we  notice that there are many duplicate looking bikeshare stations. After doing a distance based join, we count 178 stations which are within 2 meters of each other and which are probably user reported duplicates. To avoid double counting these stations, we only keep the first ocurrence of these duplicate rows, thereby dropping 98  duplicate bikeshare stations from the data. We also filter the data to just stations that are a part of the Bay Wheels or Ford GoBike networks - as captured by the `network` and `brand` columns in the OSM data. We want to focus our analysis on the Bay Wheels netwok as they have a large system of docked bikeshare stations throughout San Francisco, and Ford GoBike was the old name of the system [@said_2019] which still appears in OSM data. Finally, we do not perform any data cleaning on the ACS data as it has aready been thoroughly cleaned and validated by the Census Bureau.
 
 
-```{r}
-#| cache: true
-#| output: false
+# ---- Dedupe OSM bike data --------
 
-# ---- Clean up OSM bike data --------
-
-# There are 178 stations that are within 2 meters of another station. We remove 
-# these 89 probable duplicates
-dupe_list = st_is_within_distance(bike_rental_points, bike_rental_points, 2)
+# There are 169*2 stations that are within 3 meters of another station. These
+# are probable duplicates so I remove these 169 probable duplicates
+dupe_list = st_is_within_distance(bike_rental_points, bike_rental_points, dist = as_units(3, "m"))
 duplicates_indices = unlist(map2(.x = dupe_list, 
                                  .y = seq_along(dupe_list), 
                                  .f = function(x,y) x[x < y]))
 bike_rental_points_deduped = bike_rental_points[-duplicates_indices, ]
+
+
 
 # Add flag for stations in the Bay Wheels or Ford GoBike networks
 bike_rental_points_in_network = bike_rental_points_deduped %>% 
@@ -319,7 +644,7 @@ bike_rental_points_in_network = bike_rental_points_deduped %>%
 #     st_as_sf() %>% 
 #     rename(geometry = x)
 #     # For multipoint geometries that are points within 2 meters of each other, 
-#     # take the centriod of the 2 points for most accuracy, and to collapse to one point for future analysis
+#     # take the centroid of the 2 points for most accuracy, and to collapse to one point for future analysis
 # }
 # 
 # bike_stations_deduplicated = map_df(bike_stations_within_2_m,
@@ -329,50 +654,21 @@ bike_rental_points_in_network = bike_rental_points_deduped %>%
 # outlier_dropped_listings_price_histogram
 
 
-```
-
-
-
-## Projections 
-I will use `EPSG:7131`or the NAD83 State Plane projection for San Franscisco for all our datasets as this was one of two projected coordinate reference systems specifically created by the San Francisco City and County GIS department. This is a projected 2D conformal coordinate system that:
-
-- preserves angles between locations
-- is accurate for distance based calculations like buffers and travel time
-- is suitable for the entirety of the Bay Area.
-
-
-```{r projecting_data}
-#| cache: true
-
-airbnb_data_projected = airbnb_data_cleaned %>% 
-  st_transform("EPSG:7131")
-
-acs_data_raw = acs_data_raw %>% 
-  st_transform("EPSG:7131")
-
-bike_rental_points_in_network = bike_rental_points_in_network %>% 
-  st_transform("EPSG:7131")
-
-sfo_county_boundary = sfo_county_boundary %>% 
-  st_transform("EPSG:7131")
-
-```
-
-
-
-## Data Merging
-
-First we append ZCTA information for each Airbnb by spatially joining the point level Airbnb listings to the ZCTA polygons provided by the Census. This spatial join allows us to succesfully assign ZCTA for all but 24 of our listings. Upon visual inspection, the remaining 24 listings seem to be just outside the ZCTA boundaries. In one case, the listing was a yacht that was a few hundred meters off the coast. In order to not lose valuable information on these properties, we perform a second distance based spatial join to see if the listings are within 500 meters of any ZCTAs. With this 500 meter buffer, the 24 remaining listings were also assigned a ZCTA. 
-
-```{r append_zcta_info_to_listings}
-#| cache: true
 
 # ----- Append ZCTA information to listings -------
 
+# I append ZCTA information for each Airbnb by spatially joining the point 
+# level Airbnb listings to the ZCTA polygons provided by the Census. This 
+# spatial join allows us to successfully assign ZCTA for all but 24 of our 
+# listings. Upon visual inspection, the remaining 24 listings seem to be
+# just outside the ZCTA boundaries. In one case, the listing was a yacht that
+# was a few hundred meters off the coast. In order to not lose valuable 
+# information on these properties, I perform a second distance based spatial 
+# join to see if the listings are within 500 meters of any ZCTAs which allows
+# us to assign ZCTAs for all our listings. 
+
 # Perform spatial join, which accurately joins most listings to a zcta
-airbnb_data_joined = airbnb_data_projected %>% 
-  # st_join(zip_code_demographic_data %>% select(zip, po_name), 
-  #         left_join = TRUE) %>% 
+airbnb_data_joined = airbnb_data_cleaned %>% 
   st_join(
     acs_data_raw %>% 
       select(zcta, median_rent_e, pct_bach_higher_e, unemp_rate_16_plus_e),
@@ -381,11 +677,10 @@ airbnb_data_joined = airbnb_data_projected %>%
 
 
 # There are 24 listings which aren't joined to a zcta, lets instead match those 
-# if they're within 500 meters of a zcta. This allows all the listings to be 
-# assigned to a zcta succesfully
+# if they're within 500 meters of a zcta. 
 problematic_listings_matched_zctas = airbnb_data_joined %>% 
   filter(is.na(zcta)) %>% 
-  # Drop zcta colummn so we can take it from the acs_data_raw df after join
+  # Drop zcta column so I can take it from the acs_data_raw df after join
   select(-zcta) %>% 
   st_join(acs_data_raw %>% 
             select(zcta),
@@ -404,42 +699,34 @@ airbnb_data_corrected = airbnb_data_joined %>%
   filter(!is.na(zcta)) %>% 
   bind_rows(problematic_listings_matched_zctas)
 
-```
+
+# ---- Define Study Area bbox -------
+
+# The ZCTA level ACS data that `library(tidycensus)` produces is for the 
+# entirety of the US. But will be making ZCTA level maps of the Bay Area and 
+# therefore need to crop our data. I crop the ZCTA level ACS data to a study 
+# area bounding box, which was created by:
+# 
+# 1) Calculating which ZCTAs our Airbnb listings fall into
+# 2) Generating a bounding box around those ZCTAs
+# 3) Expanding those bounding boxes by 1-5%
+# 
+# This gives us a rectangular region, which contains all the relevant ZCTAs with 
+# Airbnb listings and a few other ZCTAs to help provide context on surrounding 
+# neighborhoods and be used as a basemap layer. 
 
 
-We want to focus our bike rental analysis to just San Francisco County, so we use a spatial join to filter to bikeshare stations in San Francisco. 
-
-```{r}
-#| cache: true 
-
-# ---- Crop bike rental points to SF ----
-bike_rental_points_sfo = bike_rental_points_in_network %>% 
-  # Rename name column bc LHS df also has name column
-  st_join(sfo_county_boundary %>% select(county = name),
-          left= FALSE)
-```
-
-Finally, the ZCTA level ACS data that `library(tidycensus)` produces is for the entirety of the US. But will be making ZCTA level maps of the Bay Area and therefore need to crop our data. We crop the ZCTA level ACS data to a study area bounding box, which was created by:
-
-1) Calculating which ZCTAs our Airbnb listings fall into
-2) Generating a bounding box around those ZCTAs
-3) Expanding those bounding boxes by 1-5% to add context on surrounding ZCTAs and make the region more square for easier visualization
-
-This gives us a rectangular region, which contains all the relevant ZCTAs with Airbmb listings and a few other ZCTAs to help provide context on surrounding neighborhoods and be used as a basemap layer. 
-
-```{r define_study_area_bbox}
-#| cache: true
-
-# ---- Define Study Area -------
-
-# Get shapefiles of all ZCTAs with at least 1 airbnb
+## Step 1) 
+# Get geos of all ZCTAs with at least 1 airbnb
 acs_zctas_with_airbnbs = acs_data_raw %>% 
   filter(zcta %in% unique(airbnb_data_corrected$zcta) ) 
 
+## Step 2) 
 # Define study area to be the bbox of the zctas with at least 1 airnb
 study_area_box = acs_zctas_with_airbnbs %>%
   st_bbox() 
 
+## Step 3) 
 # Expanding bounding box by a little bit to provide more 
 # context and to make map shape more square
 xrange <- study_area_box$xmax - study_area_box$xmin # range of x values
@@ -450,23 +737,37 @@ study_area_box[2] <- study_area_box[2] - (0.05 * yrange) # ymin - bottom
 study_area_box[3] <- study_area_box[3] + (0.15 * xrange) # xmax - right
 study_area_box[4] <- study_area_box[4] + (0.05 * yrange) # ymax - top
 
-# ---- Cropping ZCTA data to study area ------
 
 # Limit ZCTA data to study area
 acs_data_cropped = acs_data_raw %>% 
   st_crop(study_area_box)
 
-# ---- Define final datasets -----
+# Define final datasets
 airbnb_points = airbnb_data_corrected
 acs_zcta_polygons = acs_data_cropped
-```
 
-We also create a heaxgonal honeycomb grid, which will aid us when creating heatmaps, and allow us to visualize the relative density and prices of airbnb listings and bike stations easily (See Map 3 and Map 4 for examples of these hex grids in action). 
 
-```{r}
-#| cache: true
+# ---- Crop Bike data to SF ----
+# Crop OSM bike rental points to SF
+bike_rental_points_sfo = bike_rental_points_in_network %>% 
+  # Rename name column bc LHS df also has name column
+  st_join(sfo_county_boundary %>% select(county = name),
+          left= FALSE)
 
-# ---- Create hex honeycomb grid for data ----
+# Crop BayWheels Bike data to SF
+# Calculate all stations in sfo from end_station
+sfo_end_stations = end_stations %>% 
+  st_join(sfo_county_boundary %>% 
+            select(county_name = name),
+          left= FALSE)
+
+# Limit to trips within SFO, which is all the trips
+bike_trip_data_sfo = bike_trip_data_cleaned %>% 
+  filter(end_station_id %in% sfo_end_stations$end_station_id) 
+
+
+
+# ---- Create hex honeycomb grids ----
 
 # Create blank hex grid
 airbnb_area_honeycomb_grid = st_make_grid(airbnb_points, 
@@ -477,7 +778,7 @@ airbnb_area_honeycomb_grid = st_make_grid(airbnb_points,
   mutate(hex_id = row_number()) %>% 
   rename(geometry = x)
 
-# ---- Calculate hexagon level Airbnb vars ----
+### Calculate hexagon level Airbnb vars ###
 
 # Join airbnb point data to hex grid polygon data
 airbnb_points = airbnb_points %>% 
@@ -496,7 +797,7 @@ hex_grid_listing_info = airbnb_points %>%
          number_of_listings_ntile = as_factor(ntile(number_of_listings, 6))
          )
 
-# ---- Calculate hexagon level ACS vars ----
+### Calculate hexagon level ACS vars ###
 
 # Join zcta polygon data to hex grid polygon data
 zcs_zcta_polygons_hex_polygons_ints = acs_zcta_polygons %>% 
@@ -525,7 +826,7 @@ hex_grid_zcta_information = zcs_zcta_polygons_hex_polygons_ints %>%
          )
 
 
-# ---- Calculate hexagon level bike vars ----
+### Calculate hexagon level bike vars ###
 
 # Join bike point data to hex grid polygon data
 x = bike_rental_points_sfo %>% 
@@ -538,8 +839,10 @@ hex_grid_bike_info = x %>%
   group_by(hex_id) %>% 
   summarize(num_stations = n())
 
-# ---- Left join with original hexagons for correct geometries -----
 
+### Get correct geos for hexes ###
+
+# Left join with original hexagons for correct geometries
 # this has 3382 hexagons as it covers the whole study area
 hex_grid_acs_variables = airbnb_area_honeycomb_grid %>% 
   left_join(hex_grid_zcta_information,
@@ -555,26 +858,26 @@ hex_grid_bike_variables = airbnb_area_honeycomb_grid %>%
             by = "hex_id")
 ```
 
-## Mapping/Data Viz
+# Part 1: Mapping/Data Viz
 
-First we map the count (Map 1.1) and average price (Map 2.2) of Airbnb listings in Bay Area Zip Codes. Since we have already performed a spatial join to append the ZCTA information for each listing, we simply have to count the total number of listings to obtain the total count, and perform a grouped calculation by ZCTA to obtain the average price of listings. I made several design decisions for maps 1.1 and 1.2 which are justified below:
+## Mapping Airbnbs
 
-1) I decide to bin our continuous data into intervals because the ranges of our count and price variables are relatively large and we want to avoid having too many colors as we might have with a continuous color ramp. And using bins makes the resulting colors easier to read and interpret for a user. I specifically use manually created equal interval bins in order to give a reader an honest view of variation in the data.
+We map the count (Map 1.1) and average price (Map 2.2) of Airbnb listings in the Bay Area. I made several design decisions which are justified below:
 
-2) I include the number of zip codes that fall in each bin in the form of a histogram to the right of the legend. This is an effective way to give the reader the actual distribution of the variable and give  context on what may seem like arbitrary bin cutoff decisions. This also helps alleviate the problem of having areally large ZCTAs with low/high values bias the reader into thinking those high/low values are more common than they actually are. 
+1)  I bin the continuous data into equal intervals because the ranges of our variables are relatively large and I want to avoid having too many colors. Using equal interval bins makes the resulting ranges easy to interpret.
 
-3) I choose to include the surrounding ZCTA boundaries as a basemap layer and do not actually map their values (which in this case would be 0 becuase there are no Airbmbs in these surrounding ZCTAs). I intentionally do not list these light gray ZCTAs in the legend as I do not want the reader to focus on these neighborhoods. They exist only to frame the outline of the Bay Area and perhaps serve as helpful geographic context for readers familiar with the Bay Area.
+2)  I include the number of zip codes that fall in each bin as a histogram to the right of the legend. This visualizes the actual distribution of the variable and provides context on what may seem like arbitrary bin cutoff decisions.
 
-4) I use the readymade Green-Blue color palette from [ColorBrewer](https://colorbrewer2.org/#type=sequential&scheme=GnBu&n=6), based on Cynthia Brewer's research [-@harrower2003colorbrewer] on gradients that are colorblind friendly, and suitable for LCD computer screens.
+3)  I use the Green-Blue color palette from [ColorBrewer](https://colorbrewer2.org/#type=sequential&scheme=GnBu&n=6), based on Cynthia Brewer's research [-@harrower2003colorbrewer] on gradients that are colorblind friendly, and suitable for LCD computer screens.
 
-5) Finally we also provide interactive maps using `library(mapview)` just for exploratory purposes, which can be be found in the `interactive` tabs.
+4)  I provide interactive maps using `library(mapview)` for exploratory purposes in the `interactive` tabs.
 
 
 ### Map 1.1: Count of Airbnb listings
 
-::: {.panel-tabset}
+::: panel-tabset
+#### Static
 
-#### Static 
 ```{r listings_by_zipcode_map}
 #| fig-width: 7
 #| fig-height: 7
@@ -715,7 +1018,6 @@ airbnb_listings_by_zips_plot = airbnb_count_by_zcta %>%
   #          border.size = 0.2)
 
 
-
 # ----- Paste together with patchwork --------
 
 design = "
@@ -735,9 +1037,10 @@ airbnb_listings_by_zips_plot +
 
 ```
 
-Most ZCTAs have 0-75 listings. The ZCTAs with the highest count of listings are concentrated in downtown San Francisco, right next to the Bay in West Oakland. And the least amount of Airbnbs tend to be in far east Oakland and the Southwest Bay Area. This makes intuitive sense as these locations are relatively far from common tourist destinations in San Francisco and Oakland. 
+Most ZCTAs have 0-75 listings. The ZCTAs with the highest count of listings are concentrated in downtown San Francisco & right next to the Bay in West Oakland. ZCTAs with the least amount of Airbnbs tend to be in far east Oakland and Southwest Bay Area. This makes sense as these locations are far from common tourist destinations.
 
 #### Interactive
+
 ```{r}
 #| cache: false
 mapviewOptions(basemaps = "CartoDB.Positron")
@@ -746,15 +1049,11 @@ mapview(airbnb_count_by_zcta,
         layer = "Count of Listings",
         col.regions=brewer.pal(7, "GnBu"))
 ```
-
-
 :::
-
 
 ### Map 1.2: Average Airbnb Prices in Bay Area Zipcodes
 
-::: {.panel-tabset}
-
+::: panel-tabset
 #### Static
 
 ```{r listing_avg_price_by_zip_map}
@@ -905,9 +1204,10 @@ airbnb_avg_price_by_zips_plot +
 
 ```
 
-Most Airbnbs tend to be between \$150 - \$300 a night. The highest priced Airbnbs tend to be along the Pacific Ocean coast, and along the coastline of San Francisco. This could be because these Airbnbs have great views, or access to beaches/other tourist friendly amenities. Conversely, the lowest priced Airbnbs tend to be in Oakland. 
+Most Airbnbs tend to be between \$150 - \$300 a night. The highest priced Airbnbs are along the coastline of the Pacific Ocean and SF. These Airbnbs probably have great views, or access to beaches/other tourist amenities. Conversely, the lowest priced Airbnbs tend to be in Oakland.
 
 #### Interactive
+
 ```{r}
 #| cache: false
 
@@ -916,26 +1216,28 @@ mapview(airbnb_avg_price_by_zcta,
         layer = "Avg Listing Price",
         col.regions=brewer.pal(7, "GnBu"))
 ```
-
 :::
 
-We next map our two Census variables at ZCTA level to see how they vary in our study area. Our maps are very similar to the previous maps except with a few different design decisions:
+## Mapping Census variables
 
-1) I now use a continuous color ramp instead of a binned color ramp. I do this because now we are interested in looking at small differences in the Census variables across ZCTAs, which continuous color ramps can do effectively.
+We map our two Census variables at ZCTA level. Our maps are similar to the previous maps but with a few different decisions:
 
-2) I also include a color matched density plot (estimated using Kernel Density Estimation) to the right side of the legend. This is essentially a smoothed version of a histogram and allows the reader to get a sense of the distribution of the continuous variable. We choose to omit the axis for the density plot as actual density values can be hard to interpret (they are just curves whose area integrates to 1) and we really just want the reader to focus on the overall distribution of the variables and see that middle values are a lot more likely than extreme values. 
+1)  I use a continuous color ramp as we are interested in looking at small differences in the Census variables across ZCTAs.
 
+2)  I include a color matched density plot to the right of the legend. This is essentially a smoothed version of a histogram. I choose to omit the axis for the density plot as actual density values can be hard to interpret (they are just meant to integrate to 1) and I want the reader to focus on the overall distribution of the variable.
 
-### Map 2.1: Median Rent by ZCTA
+### Map 2.1: [Median Rent]{style="color:#2171b5"} by ZCTA
 
-::: {.panel-tabset}
-
+::: panel-tabset
 #### Static
 
 ```{r median_rent_map}
 #| fig-width: 6
 #| fig-height: 7.25
 #| cache: false
+
+
+# ----- Create raw median rent sf ggplot -------
 
 # Create indicator for whether a zcta is in study area or not
 acs_zcta_polygons = acs_zcta_polygons %>% 
@@ -946,7 +1248,6 @@ acs_zcta_polygons = acs_zcta_polygons %>%
   ))
 
 
-# ----- Create raw median rent sf ggplot -------
 median_rent_map = acs_zcta_polygons %>% 
   filter(in_study_area) %>% 
   ggplot(aes(fill = median_rent_e)) +
@@ -962,13 +1263,13 @@ median_rent_map = acs_zcta_polygons %>%
                       barheight = 14.5,
                       order =1
                       ),
-                    palette = "GnBu"
+                    palette = "Blues"
 
 
   ) +
   # Hacky solution to force ggplot to include NA in legend scale, create 
   # blank color aesthetic for a tiny zcta, and then override aesthetics in 
-  # guide to match NA colro values
+  # guide to match NA color values
   geom_sf(data= acs_zcta_polygons %>%
           filter(zcta == 94517),
           size = 0.1,
@@ -1004,7 +1305,6 @@ median_rent_map = acs_zcta_polygons %>%
            border.size = 0.2)
 
 
-# median_rent_map
 
 # ----- Generate density histogram for median rent -------
 
@@ -1040,7 +1340,7 @@ median_rent_density_line = median_rent_density_df %>%
   scale_color_distiller(
                   direction = 1,
                   na.value = "grey90",
-                  palette = "GnBu"
+                  palette = "Blues"
   ) +
   # scale_color_viridis_c(
   #                 # labels = scales::percent_format(),
@@ -1083,9 +1383,10 @@ median_rent_map +
 
 ```
 
-The ZCTAs with the highest rent tend to be in downtown San Fransisco and Southeast San Mateo. The ZCTAs with the lowest rent tend to be in Southeast San Francisco, and all throughout Oakland. The density plot shows us that most ZCTAs have average rents between \$1500 and \$2500 per bedroom.
+The ZCTAs with the highest rent tend to be in downtown San Francisco and Southeast San Mateo. The ZCTAs with the lowest rent tend to be in Southeast San Francisco, and all throughout Oakland. The density plot reveals that most ZCTAs have average rents between \$1500 and \$2500 per bedroom.
 
 #### Interactive
+
 ```{r}
 #| cache: false
 
@@ -1093,21 +1394,21 @@ acs_zcta_polygons %>%
   filter(in_study_area) %>% 
   mapview(zcol = "median_rent_e",
           layer = "Median Rent",
-          col.regions=brewer.pal(7, "GnBu"),
+          col.regions=brewer.pal(7, "Blues"),
           na.color = "grey40") +
   mapview(acs_zcta_polygons %>% filter(!in_study_area),
           col.regions = "grey80",
           legend = FALSE)
   
 ```
-
 :::
 
-### Map 2.2: Percentage of 25+ population with Bachelors Degree or Higher
+### Map 2.2: Percentage of 25+ population with [Bacherlors Degree or higher]{style="color:#2171b5"}
 
-::: {.panel-tabset}
 
+::: panel-tabset
 #### Static
+
 ```{r pct_bach_map}
 #| fig-width: 6
 #| fig-height: 7.25
@@ -1132,7 +1433,7 @@ bach_degree_map = acs_zcta_polygons %>%
                       barheight = 14.5,
                       order =1
                       ),
-                    palette = "GnBu"
+                    palette = "Blues"
                     
     
   ) +
@@ -1178,7 +1479,7 @@ pct_bach_higher_density_df = tribble(~pct_bach_higher_e, ~density,
 
 
 # Create density histogram for our variable using ggplot and geom_line
-# We need to use geom_line so we can get colors to vary along the line to match
+# I need to use geom_line so I can get colors to vary along the line to match
 # the legend coloring.
 pct_bach_higher_density_line = pct_bach_higher_density_df %>% 
   ggplot(aes(x = pct_bach_higher_e,
@@ -1199,7 +1500,7 @@ pct_bach_higher_density_line = pct_bach_higher_density_df %>%
     scale_color_distiller(
                     direction = 1,
                     na.value = "grey90",
-                    palette = "GnBu"
+                    palette = "Blues"
     ) +
   # Fiddled with these numbers until the density plot aligned with legend
   scale_x_continuous(expand = expansion(mult = c(0.09, 0.19))) +
@@ -1242,9 +1543,10 @@ bach_degree_map +
 
 ```
 
-The most highly educated ZCTAs tend to be in East Oakland, West San Francisco, and South San Mateo. The least educated ZCTAs tend to be in South Oakland, and South San Francisco. Generally these maps  track the median rent map in that highly educated ZCTAs tend to have high rents and vice versa. In fact these two Census variables have a correlation  of `r cor(acs_zcta_polygons %>% filter(in_study_area) %>% pull(pct_bach_higher_e), acs_zcta_polygons %>% filter(in_study_area) %>% pull(median_rent_e), use = "complete.obs") %>% round(2)`. 
+The most highly educated ZCTAs tend to be in East Oakland, West San Francisco, and South San Mateo. The least educated ZCTAs tend to be in South Oakland, and South San Francisco. Generally these maps track the median rent map in that highly educated ZCTAs tend to have high rents and vice versa. These two Census variables have a correlation of `r cor(acs_zcta_polygons %>% filter(in_study_area) %>% pull(pct_bach_higher_e), acs_zcta_polygons %>% filter(in_study_area) %>% pull(median_rent_e), use = "complete.obs") %>% round(2)`.
 
 #### Interactive
+
 ```{r}
 #| cache: false
 
@@ -1252,36 +1554,27 @@ acs_zcta_polygons %>%
   filter(in_study_area) %>% 
   mapview(zcol = "pct_bach_higher_e",
           layer = "% Bachelors </br> or higher",
-          col.regions=brewer.pal(7, "GnBu"),
+          col.regions=brewer.pal(7, "Blues"),
           na.color = "grey40") +
   mapview(acs_zcta_polygons %>% filter(!in_study_area),
           col.regions = "grey80",
           legend = FALSE)
   
 ```
-
 :::
 
-The main types of neighborhoods that we've identified in Map 2.1 and 2.2 are high housing costs and highly educated neighborhoods, which tend to be in downtown San Francisco and South San Mateo. I'll call these tech worker hubs, because these are neighborhoods close to where the headquarters of many Silicon Valley companies are located. And it makes sense that high income and highly educated tech workers would drive up rental prices here. Similarly there are less college educated and lower housing cost neighborhoods in South San Francisco and most of Oakland. This is generally where the lower-income, and often Black and brown residents of the Bay tend to live. 
+The main types of neighborhoods that we've identified in Map 2.1 and 2.2 are high housing costs and highly educated neighborhoods, which tend to be in downtown San Francisco and South San Mateo. I'll call these tech worker hubs, because these are neighborhoods close to where the headquarters of many Silicon Valley companies are located. It makes sense that high income and highly educated tech workers would drive up rental prices here. Similarly there are less college educated and lower housing cost neighborhoods in South San Francisco and most of Oakland. 
 
-If I had to use this classification to evaluate where Airbnbs would cluster, my hypothesis would be that they would cluster near these tech worker hubs (as many workers may actually use Airbnb for short term housing) and near downtown San Francisco with high rental prices (as these locations are close to many tourist attractions and probably considered safe neighborhoods).
+My hypothesis would be that Airbnbs cluster near these tech worker hubs (as many workers may need short term housing) and near downtown SF neighborhoods with high rental prices (as these locations are close to attractions and considered safe).
 
-### Map 3: <span style="color:#EF8A17">Log Price</span> of Airbnb listings and <span style="color:#2171b5">Median Rent</span>
-
+### Map 3: [Average Log Price]{style="color:#EF8A17"} of Airbnb listings and [Median Rent]{style="color:#2171b5"}
 
 ```{r create_airbnb_log_price_vs_median_rent_map}
 #| cache: false
-#| fig-height: 9.5
+#| fig-height: 8.75
 
-# mapview(hex_grid_acs_variables,
-#         zcol = "pct_bach_higher_e",
-#         col.regions=brewer.pal(9, "Blues"),
-#         layer.name = )
-# 
-# mapview(hex_grid_airbnb_variables %>% filter(!is.na(avg_hex_price)),
-#         zcol = "number_of_listings",
-#         col.regions=brewer.pal(9, "Oranges"))
 
+# ---- Do log correction -----
 # For the 4 listings with price = 0, change to price = 1 so log is defined
 airbnb_data_log_corrected = airbnb_points %>% 
   mutate(price = case_when(
@@ -1308,6 +1601,32 @@ pal_fun_oranges <- colorNumeric("Oranges", NULL, na.color= "grey90")
 pal_fun_gn_bu <- colorNumeric("GnBu", NULL, na.color= "grey90")
 pal_fun_blues <- colorNumeric("Blues", NULL, na.color= "grey90")
 
+
+# --- Calculate correlations -----
+
+# Calculate listing level and zcta level correlations between price and median rent 
+listing_level_correlation_price_rent = airbnb_data_log_corrected %>% 
+  # this is price of listing, and median rent of zcta that listing is in
+  select(price, 
+         median_rent_e) %>% 
+  st_drop_geometry() %>% 
+  {cor(.$price, .$median_rent_e, use = "complete.obs")} %>% 
+  round(2)
+
+zcta_level_correlation_price_rent = airbnb_avg_price_by_zcta %>% 
+  # this is avg price of listing in zcta, and median rent of zcta
+  select(avg_price, 
+         zcta) %>% 
+  st_drop_geometry() %>% 
+  left_join(acs_zcta_polygons %>% 
+              st_drop_geometry() %>% 
+              select(zcta, median_rent_e), 
+            by = "zcta") %>% 
+  {cor(.$avg_price, .$median_rent_e, use = "complete.obs")} %>% 
+  round(2)
+
+
+# --- Make leaflet map ----
 
 # Make leaflet map
 log_price_vs_rent_leaflet_map = leaflet() %>% addMapPane("background", zIndex = 400) %>%  
@@ -1348,7 +1667,7 @@ log_price_vs_rent_leaflet_map = leaflet() %>% addMapPane("background", zIndex = 
             )
 
 
-
+# ---- Make mapview map ----
 mapview(acs_zcta_polygons %>% filter(in_study_area),
         zcol = "median_rent_e",
         col.regions = brewer.pal(6,"Blues"),
@@ -1366,61 +1685,46 @@ mapview(hex_grid_airbnb_variables %>% filter(!is.na(avg_log_hex_price)),
 
 
 
-# Calculate listing level and zcta level correlations between price and median rent 
-listing_level_correlation_price_rent = airbnb_data_log_corrected %>% 
-  # this is price of listing, and median rent of zcta that listing is in
-  select(price, 
-         median_rent_e) %>% 
-  st_drop_geometry() %>% 
-  {cor(.$price, .$median_rent_e, use = "complete.obs")} %>% 
-  round(2)
-
-zcta_level_correlation_price_rent = airbnb_avg_price_by_zcta %>% 
-  # this is avg price of listing in zcta, and median rent of zcta
-  select(avg_price, 
-         zcta) %>% 
-  st_drop_geometry() %>% 
-  left_join(acs_zcta_polygons %>% 
-              st_drop_geometry() %>% 
-              select(zcta, median_rent_e), 
-            by = "zcta") %>% 
-  {cor(.$avg_price, .$median_rent_e, use = "complete.obs")} %>% 
-  round(2)
-
-
-
-
 ```
 
+Map 3 shows the average log price of Airbnb listings overlaid on top of a choropleth map of Median rent. Darker orange mean more expensive listings, and darker blue means higher median rent neighborhoods. For this map:
 
-Map 3 shows the average log price of Airbnb listings (orange points) overlaid on top of a chorpoleth map of Median rent. Darker orange points mean more expensive listings, and darker blue neighborhoods are higher median rent neighborhoods. I have made a couple of decisions in presenting the data that are justified below:
+1)  I aggregate the 13,000+ Airbnb points into hexagon grids and presented the average log price of listings. Hexagons allow us to visualize relative density effectively within equal area grids and don't clutter up the map.
 
-1) I have aggregated the 13,000+ Airbnb points into hexagon grids and presented the average log price of all listings within the hexagon. This is because displaying all 13,000 points on the map was way too cluttered and we needed some way to aggregate points. I considered aggregating the listings to ZCTAs, but ZCTAs have very different sizes and I wanted aggregations of roughly equal areas. 
+2)  I use interactivity because the ability to toggle layers on and off is very helpful when comparing two variables. If you hover over the layer button (right below the zoom button) and toggle the `Avg Log(Price)`, you can visually compare where the high priced airbnb neighborhoods overlap the high rent neighborhoods.
 
-2) I have used an interactive map because the ability to toggle layers on and off is very helpful when comparing the scales of two variables as we are doing here. In this case, if you hover over the layer button (right below the zoom button) and toggle the `Median Rent` layer on and off repeatedly. you can visually compare exactly where the low and high priced airbnb neighborhoods overlap the high and low median rent neighborhoods. 
+3)  I set increased transparency of the Median Rent variable to visually send that layer into the background.
 
-2) I have set increased transparency of the Median Rent layer so that we can visually send that layer into the background as we have already seen this distribution before in other maps. This also allows us to more easily see how listing prices line up with Median rent. 
+4)  I turn the map title into a pseudo-legend by making use of colors to prime the reader for the two different variables scales on the map.
 
-3) I have turned the map title into a pseudo-legend by making use of colors. This helps prime the reader for the two different variables that they will be seeing on the map. I also include two  continuous color ramp legends to represent the scales of the different colors.
+5)  There are 4 listings which have a list price of \$0 a night. I manually increment them to be \$1 a night so that  `log(price)` is well defined.
 
-4) There are 4 listings which have a list price of \$0 a night. I manually increment these values to be \$1 a night so that when we take  `log(price)`, the result will be well defined and not be -infinity. 
-
-Generally we see that neighborhoods with high listing prices (dark orange) tend to clustered near the coast, and not necesarily near high rent (dark blue) neighborhoods. There are some clusters of high listing price neighborhoods close to high rent neighborhoods, particularly in San Mateo near the Silicon Valley belt. But the highest listing neighborhoods are not generally in the highest rent neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore backs up our reading of a pretty weakly positive relationship between median ZCTA rent and Airbnb price.  
-
-
-# Part 2: 
+Neighborhoods with high listing prices (dark orange) tend to cluster near the coast, and not always near high rent (dark blue) neighborhoods. There are some clusters of high listing price neighborhoods close to high rent neighborhoods, particularly in San Mateo near the Silicon Valley belt. But the highest listing neighborhoods are not generally in the highest rent neighborhoods. The ZCTA level correlation between average listing price and median rent for the 167 ZCTAs in our study area is `r zcta_level_correlation_price_rent` and therefore confirms a weakly positive relationship between median ZCTA rent and Airbnb price.
 
 ## Potential Raster Datasets
-Some potential raster datasets we could use to improve to this analysis would be:
 
-1) Air quality data that measures particulate matter or ozone at various grid sizes, like [these data](https://ww2.arb.ca.gov/geographical-information-system-gis-library) from the California Air Resources Board. We could overlay this on top of our airbnb data to see if more expensive listings are correlated with being in good air quality areas, or see if good air quality is associated with more Airbnb listings. 
+Some raster datasets I could use to improve to this analysis would be:
 
-2) Vegetation data/indexes, that measure tree canopy cover and greenspaces at various grid sizes, like [this raster data](https://gis.data.ca.gov/datasets/CDFW::naip-2020-ndvi-california/about) from the California Department of Fish and Wildlife that provides NVDI imagery at 60 cm resolution. We could use this to look at relationships between the amount of Airbnbs/Airbnb prices and the amount of greenspace and vegetation available in the neighborhood and surrounding neighborhoods.
+1)  Air quality data that measures particulate matter or ozone at various grid sizes, like [these data](https://ww2.arb.ca.gov/geographical-information-system-gis-library) from the California Air Resources Board. I could overlay this on top of our listing data to see if more listings or more pensive listings are correlated with being in good air quality areas.
 
-## Analysis Methods Explained
-A heatmap of OSM sourced Bike rental locations are provided below
+2)  Vegetation data/indexes, that measure tree canopy cover and greenspaces at various grid sizes, like [this raster data](https://gis.data.ca.gov/datasets/CDFW::naip-2020-ndvi-california/about) from the California Department of Fish and Wildlife that provides NVDI imagery at 60 cm resolution. I could use this to look at relationships between the amount of Airbnbs/Airbnb prices, socioeconomic variables, and the amount of greenspace and vegetation available in the neighborhood.
 
-### Map 4: <span style="color:#CA1551">Bike Rental</span> locations from Open Street Map
+# Part 2: Spatial Analysis
+
+I perform an analysis of travel time during rush hour by bike and car from a bikeshare station in central San Francisco at Union Square. The key question I will be asking is which trips are quicker by bike rather than car and why?
+
+## Visualizing bike rental network
+
+I create a heatmap of bike rentals pulled from OpenStreetMap. I make a few key decisions justified below:
+
+1)  I use hexagon binning to aggregate the point level data and present zero bins as grey NA values to easily see the neighborhoods in SF without bike rentals.
+
+2)  For exploratory purposes, I provide a point map of bike rentals in a separate tab which maps the point distributions. I overlay the full listing of Bay Wheels Bikeshare stations on this map (in light green) as calculated from the Bay Wheels data, which highlights the limitations of relying on crowdsourced and incomplete OSM data.
+
+::: panel-tabset
+### Heatmap
+
+#### Map 4: Heatmap of [OSM Bike Rentals]{style="color:#611bb1"} in San Francisco
 
 ```{r}
 #| cache: false
@@ -1431,35 +1735,74 @@ acs_zcta_polygons_in_sf = acs_zcta_polygons %>%
   st_intersection(sfo_county_boundary %>% 
             select(county_name = name)) 
 
-# Make heatmap of Bike rental stations
+# ---- Make heatmap with leaflet -----
+# leaflet() %>%
+#   addProviderTiles(provider = providers$CartoDB.Positron) %>%
+#   addHeatmap(data = bike_rental_points_sfo %>% st_transform("EPSG:4326"), 
+#              blur = 25,
+#              radius = 10,
+#              gradient = "GnBu")
+
+
+# ---- Make heatmap with hex bins -----
+
+hex_grid_bike_variables %>%
+  st_join(sfo_county_boundary, left = FALSE) %>%
+  mapview(zcol = "num_stations",
+          layer = "# Locations",
+          alpha.regions = 0.6,
+          # at = seq(0,20, by = 5),
+          col.regions = brewer.pal(7, "Purples"))
+
+```
+
+<br>
+
+Most bike stations are located in North East San Francisco, where the Financial Districts and major tourist attractions (like Pier 39) are located. There are basically no bike rental locations in West or South San Francisco, which makes sense as there are large mountains and hills in that part of the city.
+
+### Point Map
+
+#### Map 4: Point map of [OSM Bike Rentals]{style="color:#611bb1"} and [Bay Wheels stations]{style="color:#82d9b7"} in San Francisco
+
+```{r make_point_density_map}
+
+# Make point map of Bike rental stations
 bike_point_map_sf = ggplot() +
   geom_sf(data = acs_zcta_polygons_in_sf,
           color = "white",
           fill = "grey90"
           ) +
   geom_sf(data = bike_rental_points_sfo, 
-          color = "#CA1551",
+          color = "#6a51a3",
           stroke = FALSE,
-          alpha = 0.4,
+          alpha = 0.7,
           size = 3) +
-  theme_void()
+  geom_sf(data = end_stations,
+          color = "#2D936C",
+          stroke = FALSE,
+          alpha = 0.2,
+          size = 3) +
+  theme_void() +
+  scalebar(acs_zcta_polygons_in_sf, 
+           dist = 1, 
+           dist_unit = "km", 
+           transform = FALSE,
+           location = "topleft",
+           height = 0.01,
+           st.size = 4,
+           st.color = "grey80", 
+           box.fill = c("gray90", "gray98"),
+           box.color = "gray90", 
+           border.size = 0.2)
+
 
 bike_point_map_sf
 
-# Hex version of heatmap
-# hex_grid_bike_variables %>% 
-#   st_join(sfo_county_boundary, left = FALSE) %>% 
-#   mapview(zcol = "num_stations",
-#           layer = "# Stations",
-#           alpha.regions = 0.3,
-#           # at = seq(0,20, by = 5),
-#           col.regions = brewer.pal(7, "Oranges"))
 
 ```
- l
-This maps shows that most bike rental locations are located in San Francisco, along with seemingly a second network in Oakland, and just a handful in San Mateo. Digging deeper into the OSM data, we see that there are a total of `r nrow(bike_rental_points_sfo)` bike rental stations in our study area. And while most of these don't have explicit names, there are many marked as belonging to Bay Wheels, which is the main bikeshare station serving San Francisco, San Jose and the East Bay.
+:::
 
-### Creating buffers around bike share stations
+## Creating buffers
 
 ```{r creating_buffers}
 #| cache: false
@@ -1481,32 +1824,625 @@ count_airbnbs_close_to_bikes = nrow(unique_airbnbs_in_buffer)
 count_total_airbnbs_in_sfo = nrow(airbnb_points %>% st_intersection(sfo_county_boundary))
 ```
 
-Next, we create 200 meter buffers around the bike share stations in our study area, and then perform a spatial join to see which Airbnbs fall within these buffer areas. Overall,  `r count_airbnbs_close_to_bikes` unique Airbnbs (or `r ((count_airbnbs_close_to_bikes/ count_total_airbnbs_in_sfo) %>% round(3))*100`% of Airbnbs) are within the 200 meter buffer of bike stations. For me, this would help decide where to choose an Airbnb if I was going to San Francisco as I personally love biking. But I would have doubts about the effectiveness of this strategy given that Open Street Map data can often be incomplete or out of date. So it is likely that this is not a full or accurate list of bikeshare friendly Airbnbs that meet our criteria.
+I create 200 meter buffers around bike share stations in SF, and perform a spatial join to see which Airbnbs are bike accessible. Overall, `r count_airbnbs_close_to_bikes %>% format(big.mark = ",", scientific = FALSE)` unique Airbnbs (or `r ((count_airbnbs_close_to_bikes/ count_total_airbnbs_in_sfo) %>% round(3))*100`% of Airbnbs in San Francisco) are within the 200 meter buffers. This would help me decide where to rent an Airbnb, but I would have doubts about the effectiveness of this strategy given that we know OSM data is incomplete.
+
+## Generating bike and car travel times
+
+```{r, generate_summary_stats_for_bike_trips}
+#| cache: true
+#| echo: false
+
+# ---- Generate summary stats for trips to other stations -----
+
+# Takes a long time! Get group wise ntiles and number of trips
+bike_trip_data_sfo = bike_trip_data_sfo %>% 
+  group_by(start_station_id, end_station_id) %>% 
+  mutate(duration_ntile = ntile(duration, 10),
+         num_trips_between_stations = n()) %>% 
+  ungroup()
 
 
-# Spatial Analysis
+# Helper fxn to calculate if value is in middle 90% quantile
+is_in_bottom_80_quantile = function(x){
+  x <= quantile(x, 0.8)
+}
 
-# Conclusion
+# Keep only bottom 80% of bike trips to remove very long trips for each station.
+# Keep all data if there are less than 5 trips between origin and destination
+bike_trip_data_sfo_trimmed = bike_trip_data_sfo %>% 
+  group_by(station_combo_id) %>% 
+  mutate(is_in_bottom_80_quantile = duration <= quantile(duration, 0.8)) %>% 
+  filter(is_in_bottom_80_quantile | num_trips_between_stations<5) %>% 
+  ungroup()
 
-# Appendix
-
-## Appendix A: Relationship between Zip Code and ZCTA boundraies
-
-The below interactive shows the zip code (left side) and ZCTA (right side) boundaries are slightly different. ZCTA are
-
-```{r}
-#| cache: false
-
-
-# zip_codes_cropped = zip_codes %>% 
-#   st_crop(study_area_box)
-# 
-# acs_data_raw_cropped = acs_data_raw %>% 
-#   st_transform("EPSG:7131") %>% 
-#   st_crop(study_area_box)
-# 
-# mapview(zip_codes_cropped, color = "blue") | mapview(acs_data_raw_cropped, color = "blue")
+# From trimmed data, calculate avg and median duration
+bike_trips_beween_stations_summary = bike_trip_data_sfo_trimmed %>% 
+  group_by(start_station_id, end_station_id) %>% 
+  summarize(num_trips_between_stations = n(),
+            avg_duration = (mean(duration) %>% as.numeric(units = "hours"))*60*60,
+            median_duration = (median(duration) %>% as.numeric(units = "hours"))*60*60
+              ) %>% 
+  ungroup()  %>% 
+  # Append point geographies of end station
+  left_join(sfo_end_stations, by = "end_station_id") %>% 
+  st_as_sf()
+ 
 
 ```
 
+Overall there are `r nrow(bike_trip_data_sfo_trimmed) %>% format(big.mark = ",", scientific = FALSE)` total trips from the Union Station dock in the Bay Wheels data, and `r nrow(bike_trips_beween_stations_summary) %>% format(big.mark = ",", scientific = FALSE)` unique trip combinations. For each unique trip combination, I calculate average (mean and median) trip durations of all trips in the Bay Wheels data. Before calculating averages, I drop the top 20% of longest trips for each trip combination. This is because the distribution of biking times has a long right tail, likely representing riders who got lost, or had trouble getting to the destination. These trips are not representative of average trips and heavily skew our grouped calculations, so I drop them. For trip combinations that have less than 5 data points, I don't do this trimming as this would mean dropping half or more of the data points. And with limited trip information, I want to use all available information.
 
+```{r, generate_summary_stats_for_bike_trips_just_code}
+#| cache: true
+#| echo: false
+#| eval: false
+
+# ---- Generate summary stats for trips to other stations -----
+
+# Takes a long time! Get group wise ntiles and number of trips
+bike_trip_data_sfo = bike_trip_data_sfo %>% 
+  group_by(start_station_id, end_station_id) %>% 
+  mutate(duration_ntile = ntile(duration, 10),
+         num_trips_between_stations = n()) %>% 
+  ungroup()
+
+
+# Helper fxn to calculate if value is in middle 90% quantile
+is_in_bottom_80_quantile = function(x){
+  x <= quantile(x, 0.8)
+}
+
+# Keep only bottom 80% of bike trips to remove very long trips for each station.
+# Keep all data if there are less than 5 trips between origin and destination
+bike_trip_data_sfo_trimmed = bike_trip_data_sfo %>% 
+  group_by(station_combo_id) %>% 
+  mutate(is_in_bottom_80_quantile = duration <= quantile(duration, 0.8)) %>% 
+  filter(is_in_bottom_80_quantile | num_trips_between_stations<5) %>% 
+  ungroup()
+
+# From trimmed data, calculate avg and median duration
+bike_trips_beween_stations_summary = bike_trip_data_sfo_trimmed %>% 
+  group_by(start_station_id, end_station_id) %>% 
+  summarize(num_trips_between_stations = n(),
+            avg_duration = (mean(duration) %>% as.numeric(units = "hours"))*60*60,
+            median_duration = (median(duration) %>% as.numeric(units = "hours"))*60*60
+              ) %>% 
+  ungroup()  %>% 
+  # Append point geographies of end station
+  left_join(sfo_end_stations, by = "end_station_id") %>% 
+  st_as_sf()
+ 
+```
+
+Then I use `library(hereR)` to calculate travel times by bike and car for those 251 trip combinations during rush hour (8 AM EST on Dec 8th, 2022). I also generate 8 minute drive time isochrones to represent the areas that travelers could get to in 8 minutes from the chosen station.
+
+```{r generate_travel_time_matrices}
+#| cache: true
+
+
+# ---- Choose 1 focus station ------ 
+chosen_station = sfo_end_stations %>% 
+  filter(end_station_id == chosen_station_id)
+        
+# Get lng/lat
+start_lng_lat = chosen_station %>% 
+  st_transform("EPSG:4326") %>%
+  st_coordinates() %>%
+  as.vector()
+
+
+# ---- Generate isochrones from HERE and OSM -----
+chosen_station_8_min_car_isochrone_here = isoline(
+  poi = chosen_station,
+  datetime = as.POSIXct("2022-12-08 17:00:00 EST"),
+  routing_mode = "short",
+  range = 8 * 60,
+  transport_mode = "car",
+  traffic = TRUE,
+  optimize = "quality"
+) %>% 
+  st_transform("EPSG:7131")
+
+
+chosen_station_5_min_car_isochrone_osm <- osrmIsochrone(
+  loc = c(start_lng_lat[1], start_lng_lat[2]), 
+  breaks = 5
+  ) %>% 
+  st_transform("EPSG:7131")
+
+# Limit to stations within 5 min car drive
+stations_within_5_min_car_drive = 
+  st_intersection(
+    sfo_end_stations,
+    chosen_station_8_min_car_isochrone_here) 
+
+# Remove stations that are within 250 meters
+stations_within_5_min_car_drive_study_area = 
+  st_difference(
+    stations_within_5_min_car_drive,
+    chosen_station %>% 
+      st_buffer(250)
+  )
+
+
+# ---- Generate travel time matrices from HERE -----
+
+sfo_end_stations = sfo_end_stations %>% 
+  # output travel matrices have a dest_id col that corresponds to index of destinations/
+  # I create ourselves here so I can easily join later
+  mutate(dest_id = row_number())
+
+driving_route_matrix = 
+  route_matrix(
+    origin = chosen_station,
+    destination = sfo_end_stations,
+    datetime = as.POSIXct("2022-12-08 08:00:00 EST"),
+    routing_mode = "short",
+    transport_mode = "car"
+  ) %>% 
+  as_tibble()
+
+biking_route_matrix = 
+  route_matrix(
+    origin = chosen_station,
+    destination = sfo_end_stations,
+    datetime = as.POSIXct("2022-12-08 08:00:00 EST"),
+    routing_mode = "short",
+    transport_mode = "bicycle"
+  ) %>% 
+  as_tibble()
+
+walking_route_matrix = 
+  route_matrix(
+    origin = chosen_station,
+    destination = sfo_end_stations,
+    datetime = as.POSIXct("2022-12-08 08:00:00 EST"),
+    routing_mode = "short",
+    transport_mode = "pedestrian"
+  ) %>% 
+  as_tibble()
+
+# ---- Bind travel time matrices together -----
+
+# Bind together all travel matrices and transform to a wide df for easy joining
+route_matrices = bind_rows(driving_route_matrix, biking_route_matrix, walking_route_matrix)
+
+route_matrices_wide = route_matrices %>% pivot_wider(
+ id_cols =dest_id,
+ names_from = mode,
+ values_from  = c("distance", "duration")
+)
+
+routing_data_for_chosen_station = route_matrices_wide %>% 
+  left_join(sfo_end_stations, by = "dest_id") %>% 
+  rename(geometry_end = geometry) %>% 
+  mutate(geometry_start = chosen_station$geometry)
+
+# routing_data_for_chosen_station %>% st_write("data/here_routing_information.geojson", delete_dsn = TRUE)
+
+# ---- Combine HERE and Bay Wheels data -----
+bike_trips_beween_stations_summary = bike_trips_beween_stations_summary %>%
+  # Rename to standardize column names
+  rename(duration_bicycle_baywheels_avg = avg_duration,
+         duration_bicycle_baywheels_median = median_duration)
+
+routing_duration_summary = bike_trips_beween_stations_summary %>% 
+  left_join(routing_data_for_chosen_station %>% 
+              select(-dest_id, geometry_end), 
+            by = "end_station_id") %>% 
+  select(start_station_id, 
+         end_station_id,
+         num_trips_between_stations,
+         duration_car,
+         duration_bicycle,
+         duration_bicycle_baywheels_avg,
+         duration_bicycle_baywheels_median,
+         duration_pedestrian, 
+         everything())
+
+
+routing_duration_summary_long = routing_duration_summary %>% 
+  pivot_longer(
+    cols = c(duration_car, 
+             duration_bicycle, 
+             duration_bicycle_baywheels_avg, 
+             duration_bicycle_baywheels_median, 
+             duration_pedestrian),
+    names_to = "mode",
+    values_to = "duration"
+  ) %>% 
+  mutate(mode = str_remove_all(mode, "duration_"),
+         # Convert duration from seconds to minutes
+         duration = duration/60) %>% 
+  select(mode, duration, everything())
+
+
+```
+
+## Assessing validity of bike estimates
+
+From our previous calculations, I have 2 estimates of biking time for each of our 251 trips. One estimate from the HERE API and another from the Bay Wheels data. I compare the two to essentially assess the real world validity of the HERE estimates by:
+
+1)  Ordering the 251 unique trips from the least difference to the most difference between HERE and Bay Wheels data estimates
+2)  Splitting the data up into 20 buckets or ntile
+3)  Calculating a few averages for each ntile
+
+The results are summarized in the below table
+
+### Difference in routing times between HERE and Bay Wheels data
+
+```{r create_routing_time_diff_table}
+
+# ---- Create routing time summary table -----
+routing_duration_diffs = routing_duration_summary %>% 
+  select(end_station_id, 
+         num_trips_between_stations,
+         duration_bicycle, 
+         duration_bicycle_baywheels_avg,
+         duration_bicycle_baywheels_median,
+         distance_bicycle,
+         distance_car) %>% 
+  mutate(diff_here_baywheels_avg = duration_bicycle - duration_bicycle_baywheels_avg,
+         diff_here_baywheels_med = duration_bicycle - duration_bicycle_baywheels_median
+         ) %>% 
+  pivot_longer(
+    cols = starts_with("diff"),
+    names_to= "bay_wheels_stat",
+    values_to = "duration_difference"
+  )
+
+
+routing_duration_diff_table = routing_duration_diffs %>% 
+  filter(bay_wheels_stat == "diff_here_baywheels_med") %>% 
+  mutate(ntile_duration_diff = ntile(duration_difference, 20),
+         percent_rank_duration_diff = percent_rank(duration_difference)) %>% 
+  group_by(ntile_duration_diff) %>% 
+  summarize(
+          avg_duration_here = mean(duration_bicycle) /60,
+          avg_duration_system_data = mean(duration_bicycle_baywheels_median) /60,
+          avg_duration_difference = mean(duration_difference) /60,
+          avg_number_of_trips = mean(num_trips_between_stations) / 60,
+          avg_distance_car = mean(distance_car),
+          avg_distance_bicycle = mean(distance_bicycle)) %>% 
+  select(Ntile = ntile_duration_diff,
+         `Distance (m)` = avg_distance_bicycle,
+         `# of Trips` = avg_number_of_trips,
+         `HERE`  = avg_duration_here,
+         `Bay Wheels Median`  = avg_duration_system_data,
+         `Diff (min)` = avg_duration_difference,
+         ) %>% 
+  st_drop_geometry()
+
+
+  gt_theme_538 <- function(data,...) {
+    data %>%
+    opt_all_caps()  %>%
+    opt_table_font(
+      font = list(
+        google_font("Lato"),
+        default_fonts()
+      )
+    ) %>%
+      tab_style(
+        style = cell_borders(
+          sides = "bottom", color = "transparent", weight = px(2)
+        ),
+        locations = cells_body(
+          columns = TRUE,
+          # This is a relatively sneaky way of changing the bottom border
+          # Regardless of data size
+          rows = nrow(data$`_data`)
+        )
+      )  %>% 
+    tab_options(
+      column_labels.background.color = "white",
+      table.border.top.width = px(3),
+      table.border.top.color = "transparent",
+      table.border.bottom.color = "transparent",
+      table.border.bottom.width = px(3),
+      column_labels.border.top.width = px(2),
+      column_labels.border.top.color = "transparent",
+      column_labels.border.bottom.width = px(2),
+      column_labels.border.bottom.color = "black",
+      data_row.padding = px(3),
+      source_notes.font.size = 12,
+      table.font.size = 12,
+      heading.align = "left",
+      ...
+    ) 
+}
+
+
+routing_duration_diff_table %>% 
+  gt() %>% 
+  gt_theme_538 %>% 
+  fmt_number(
+    columns = -`Ntile`,
+    rows = everything(),
+    decimals = 2,
+  ) %>% 
+  tab_spanner(label = "Avg", 
+              columns = -`Ntile`) %>% 
+  data_color(
+    columns = c(`Diff (min)`),
+    colors = scales::col_numeric(
+      palette = "PuOr",
+      reverse = TRUE,
+      domain = c(-25,25)
+    )
+  )
+
+
+
+```
+
+Overall the expected biking times between HERE and Bay Wheels data are within a few minutes of each other. For Ntiles 7-20 - which corresponds to 65% or 163/251 unique bike trips - the HERE API times are an overestimate, and real world bikers are a little faster. For Ntiles 1-7 - which corresponds to 35% of bike trips - The HERE API times are an underestimate. The travel times that HERE got the most wrong (ie the bottom and top of the table) tend to be routes with a low number of overall trips and relatively long distance trips. These are infrequent/rare trips and so our limited Bay Wheels data might be skewed.
+
+## Analyzing travel times
+
+Next I map our calculated travel times by mode of transport (car vs bike)
+
+::: panel-tabset
+### Total Time
+
+#### Map 5.1: Travel Time Estimates from [Union Station]{style="color:#1B98E0"}
+
+```{r make_travel_time_map}
+
+# ---- Clean up data for map -----
+
+routing_duration_summary_long_for_plot = routing_duration_summary_long %>% 
+  # don't plot pedestrian numbers
+  filter(mode != "pedestrian") %>% 
+  # There are 542 rides that end at the same start station, which I remove
+  filter(end_station_id != chosen_station$end_station_id) %>% 
+  # Make text more readable
+  mutate(mode = case_when(
+    mode == "bicycle" ~ "Bike (HERE)",
+    mode == "bicycle_baywheels_avg" ~ "Bike (Bay Wheels Avg)",
+    mode == "bicycle_baywheels_median" ~ "Bike (Bay Wheels Median)",
+    mode == "car" ~ "Car (HERE)"
+  )) %>% 
+  mutate(mode = fct_relevel(mode, 
+                          levels = c("Bike (Bay Wheels Avg)", 
+                                     "Bike (Bay Wheels Median)", 
+                                     "Bike (HERE)", 
+                                     "Car (HERE)")))
+
+# ---- Make map -----
+routing_duration_summary_long_for_plot %>% 
+  ggplot() +
+  geom_sf(data = sfo_county_boundary, 
+          fill = "gray95", 
+          color = "white",
+          size = 3) +
+  geom_sf(aes(color = duration, size = num_trips_between_stations),
+          alpha = 0.5) +
+  geom_sf(data = chosen_station, 
+          color = "#1B98E0",
+          size = 1.7,
+          alpha  = 0.9) +
+  scale_color_viridis_c(direction = -1, option = "magma") +
+  theme_void() +
+  facet_wrap(~mode) +
+  guides(color = guide_colorbar(title = "Duration (min)"),
+         size = guide_legend(title = "# Trips",
+                             override.aes = list(color = "grey80",
+                                                 alpha = 0.7))) +
+  theme(
+      legend.margin = margin(0,0,0,0),
+      text = element_text(family = "Lato"),
+      plot.title= element_text(face = "bold.italic", 
+                               size = 13),
+      strip.text = element_text(size = 12, 
+                                vjust = 0.9,
+                                face = "bold.italic"),
+      # axis.line.y = element_line(),
+      # axis.text.y = element_text(),
+      # axis.text.x = element_text(),
+      # axis.title.x = element_text(),
+      plot.title.position = "plot") +
+    scalebar(routing_duration_summary_long_for_plot, 
+           dist = 1, 
+           dist_unit = "km", 
+           transform = FALSE,
+           location = "topleft",
+           height = 0.02,
+           st.size = 3,
+           st.color = "grey80", 
+           box.fill = c("gray90", "gray98"),
+           box.color = "gray90", 
+           border.size = 0.2,
+           facet.var = "mode",
+           facet.lev = "Bike (Bay Wheels Avg)")
+
+
+
+```
+
+### Difference from Car
+
+#### Map 5.2: Travel Time Difference relative to Car from [Union Station]{style="color:#1B98E0"}
+
+```{r make_travel_time_diff_map}
+
+
+# ---- Clean up data for map ------
+routing_duration_diff_summary = routing_duration_summary %>% 
+  mutate(
+    bicycle = duration_bicycle - duration_car,
+    bicycle_baywheels_avg = duration_bicycle_baywheels_avg - duration_car,
+    bicycle_baywheels_median = duration_bicycle_baywheels_median - duration_car,
+  ) %>% 
+  select(end_station_id, 
+         starts_with("bicycle"),
+         num_trips_between_stations, 
+         starts_with("distance")) %>% 
+  pivot_longer(cols =c(bicycle, bicycle_baywheels_avg, bicycle_baywheels_median),
+               names_to = "mode", 
+               values_to = "duration_diff") %>% 
+  # don't plot pedestrian numbers
+  filter(mode != "pedestrian") %>% 
+  # There are 542 rides that end at the same start station, which I remove
+  filter(end_station_id != chosen_station$end_station_id) %>% 
+  # Make text more readable
+  mutate(mode = case_when(
+    mode == "bicycle" ~ "Bike (HERE)",
+    mode == "bicycle_baywheels_avg" ~ "Bike (Bay Wheels Avg)",
+    mode == "bicycle_baywheels_median" ~ "Bike (Bay Wheels Median)")) %>% 
+  mutate(mode = fct_relevel(mode, 
+                          levels = c("Bike (Bay Wheels Avg)", 
+                                     "Bike (Bay Wheels Median)", 
+                                     "Bike (HERE)"))) %>% 
+  mutate(duration_diff = duration_diff/60) %>% 
+  mutate(is_negative = case_when(
+    duration_diff <=0 ~ "— Diff",
+    duration_diff >0 ~ "+ Diff"
+  ))
+
+
+routing_duration_diff_summary_in_8_min_car_isochrone = routing_duration_diff_summary %>% 
+  st_intersection(chosen_station_8_min_car_isochrone_here)
+
+
+# ---- Make map ------
+
+routing_duration_diff_summary_in_8_min_car_isochrone %>% 
+  ggplot() +
+  geom_sf(data = chosen_station_8_min_car_isochrone_here, 
+          fill = "gray95", 
+          color = "white",
+          size = 3) +
+  geom_sf(aes(color = duration_diff, 
+              size = num_trips_between_stations),
+          alpha = 1) +
+  scale_size_area(max_size = 3) +
+  scale_color_distiller(
+    palette = "PuOr",
+    direction = -1,
+    values = c(0,0.05, 1)
+    # limits = c(-100, 100)
+    ) +
+  geom_sf(data = chosen_station, 
+          color = "#1B98E0",
+          size = 1.7,
+          alpha  = 0.4) +
+  theme_void() +
+  facet_grid(cols = vars(mode),
+             rows = vars(is_negative),
+             switch = "y") +
+  guides(color = guide_colorbar(title = "Diff (min)"),
+         size = guide_legend(title = "# Trips",
+                             override.aes = list(color = "grey80",
+                                                 alpha = 0.7))) +
+  theme(
+      legend.margin = margin(0,0,0,0),
+      text = element_text(family = "Lato"),
+      plot.title= element_text(face = "bold.italic", 
+                               size = 13),
+      strip.text = element_text(size = 12, 
+                                vjust = 0.9,
+                                face = "bold.italic"),
+      # strip.text.y = element_text(angle = 180),
+      # strip.placement = "outside", 
+      # axis.line.y = element_line(),
+      # axis.text.y = element_text(),
+      # axis.text.x = element_text(),
+      # axis.title.x = element_text(),
+      plot.title.position = "plot")
+
+
+
+# ---- Calculating shortest and longest trips -----
+
+# x = routing_duration_summary %>%
+#   filter(end_station_id != chosen_station$end_station_id)
+
+# x %>% 
+#   arrange(duration_bicycle) %>% 
+#   slice(1:3) %>% 
+#   select(end_station_id, starts_with("duration"), starts_with("dist"))
+# 
+# x %>% 
+#   arrange(-duration_bicycle_baywheels_avg) %>% 
+#   slice(1:3) %>% 
+#   select(end_station_id, starts_with("duration"), starts_with("dist"))
+# 
+# x %>% 
+#   arrange(-duration_bicycle_baywheels_median) %>% 
+#   slice(1:3) %>% 
+#   select(end_station_id, starts_with("duration"), starts_with("dist"))
+# 
+# x %>%
+#   arrange(-duration_car) %>% 
+#   slice(1:3) %>% 
+#   select(end_station_id, starts_with("duration"), starts_with("dist"))
+# 
+# x %>% filter(end_station_id == "SF-U21")  %>% 
+#     select(end_station_id, starts_with("duration"), starts_with("dist")) %>% 
+#   mapview() + mapview(chosen_station, col.regions= "red")
+# 
+# x %>% 
+#   arrange(distance_bicycle) %>% 
+#   slice(1:3) %>% 
+#   select(end_station_id, starts_with("duration"), starts_with("dist"))
+# 
+# 
+# x %>% 
+#   filter(end_station_id %in% c("SF-Y7", "SF-B15")) %>% 
+#   st_drop_geometry() %>% 
+#   View()
+
+
+# routing_duration_diff_summary %>% 
+#   filter(duration_diff < 5)
+# 
+# 
+# routing_duration_diff_summary_in_8_min_car_isochrone %>% 
+#     filter(duration_diff <0) 
+# 
+# routing_duration_diff_summary_in_8_min_car_isochrone %>%
+#   filter(mode == "Bike (Bay Wheels Median)") %>%
+#   # mapview()
+#   filter(duration_diff <3) %>%
+#   mapview()
+
+
+```
+:::
+
+In Map 5.1 we see that car trips to all stations are relatively quick. Bike times are comparable at short distances but not at long distances. The quickest trip from the Bay Wheels data is to station `SF-F27`, which is three blocks down the same street. The slowest trip is to station `SF-B15`, which is in the Presidio. This interestingly is not the longest distance trip but there is a large hill climb.
+
+In Map 5.2 I only display stations within the 8 minute driving time isochrone and shows differences relative to car trips. 8/90 stations are faster by bike than car (ie have negative difference values) according to the Bay Wheels medians. If we expand this criteria to bike trips that are at most 3 minute slower than cars (perhaps taking into account parking time), this includes 62/90 stations. The majority of the 8 bike friendly destinations lie along Market Street and Polk Street, which are both main streets with fully protected grade separated bike lanes. The takeaway here for policy makers is that to incentivize speedy bike trips, build more and better protected bike lanes. Better bike infrastructure here translates to faster bike trips.
+
+# Conclusion
+
+This paper first analyzed Airbnb and Census data for San Francicso, Oakland, and
+San Mateo. We found that expensive neighborhoods tend to also be highly educated 
+neighborhoods. And there are clear tech worker hubs with large numbers of Airbnb 
+listings in South San Mateo (near the headquarters of Silicon Valley companies)
+and central San Francisco. The highest priced Airbnbs tend to be along 
+coastlines and close to tourist amenities. Future analyses of the Airbnb data 
+should take into account seasonality, and other rental/housing market data.
+
+I then analyzed travel times by car and bike throughout San Francisco 
+from a central bikeshare dock. There are many station trips that are quicker, 
+or at least equally as fast as car, mostly located along major bikeways. Future
+analyses of bikeshare data should take into account the locations of bike
+lanes/bike infrastructure across San Francisco, days/times of trips, and
+topography of the city.
+
+# References
+
+::: {#refs}
+:::
+
+# Appendix
+
+## A note on ZCTAs
+
+Zip Code Tabulation Areas (ZCTAs) are generalized representations of zip codes, and in most cases are very similar to zip codes. But their boundaries can sometimes be a little different due to differences in how the Postal Service and Census calculates zip codes vs ZCTAs respectively. For the sake of standardization, in this paper I always use ZCTA geographies instead of zip code geographies as these are the geography at which ACS data are available and are therefore a standard unit of geography we can join all our point and polygon level data to. Whenever I refer to "zip codes", these will always mean Zip Code Tabulation Areas. If I had used USPS zip code level geographies (like [this data](https://geodata.lib.berkeley.edu/catalog/ark28722-s7888q) from Berkeley Geodata library) I would have to solve the complex problem of merging zip codes to ZCTA's and dealing with zip codes that fall into multiple ZCTA's.
+
+## A note on the ACS
+
+The 5 year ACS survey contains average values from 5 years of data collection in order to provide robust and precise estimates with low standard errors. The trade off is that these data are not the most recent and should instead be interpreted as roughly the average demographic composition within 2016-2020. This timeframe does not align with the Airbnb data which was scraped in 2022, but is likely still the best estimate of the demographic composition of these neighborhoods.

@@ -3,4 +3,6 @@
 .RData
 .Ruserdata
 data/acs_zcta_data_raw_saved.geojson
-data/raw-data/BART_System_2020.kmz
+.env
+GY476_50797_cache/docx/data_read_in_*
+GY476_50797_cache/html/data_read_in_*
